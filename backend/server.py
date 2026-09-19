@@ -102,6 +102,12 @@ class ProgressIn(BaseModel):
     photoUrls: List[str] = []
 
 
+class SubItemIn(BaseModel):
+    name: str
+    harga: int = 0
+    status: bool = False
+
+
 # ---------- Finance calc ----------
 async def compute_summary(project: dict) -> dict:
     project_id = project["id"]
@@ -151,15 +157,32 @@ async def compute_workitems(project: dict):
     items = await db.work_items.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
     result = []
     for wi in items:
-        weight = (wi["nilai"] / nominal * 100) if nominal else 0
+        subs = await db.sub_items.find({"work_item_id": wi["id"]}, {"_id": 0}).to_list(2000)
+        sub_total = sum(s.get("harga", 0) for s in subs)
+        done_total = sum(s.get("harga", 0) for s in subs if s.get("status"))
+        has_subs = len(subs) > 0
         entries = await db.progress_entries.find(
             {"workItemId": wi["id"]}, {"_id": 0}
         ).sort("date", 1).to_list(2000)
-        last_progress = entries[-1]["progress"] if entries else 0
+        manual_last = entries[-1]["progress"] if entries else 0
+        effective_nilai = sub_total if has_subs else wi.get("nilai", 0)
+        if has_subs:
+            item_progress = round(done_total / sub_total * 100, 1) if sub_total else 0
+        else:
+            item_progress = manual_last
+        weight = (effective_nilai / nominal * 100) if nominal else 0
         result.append({
-            **{k: v for k, v in wi.items() if k != "project_id"},
+            "id": wi["id"],
+            "name": wi["name"],
+            "nilai": effective_nilai,
+            "manualNilai": wi.get("nilai", 0),
+            "createdAt": wi.get("createdAt"),
             "weight": round(weight, 2),
-            "lastProgress": last_progress,
+            "lastProgress": item_progress,
+            "subTotal": sub_total,
+            "doneValue": done_total,
+            "subCount": len(subs),
+            "hasSubs": has_subs,
             "entryCount": len(entries),
         })
     return result
@@ -167,11 +190,14 @@ async def compute_workitems(project: dict):
 
 async def project_total_progress(project: dict):
     items = await compute_workitems(project)
-    total_weight = sum(i["weight"] for i in items)
-    if total_weight == 0:
-        return 0.0, items
-    weighted = sum(i["weight"] * i["lastProgress"] / 100 for i in items)
-    total = weighted / total_weight * 100
+    nominal = project.get("nominal", 0) or 0
+    done_value = 0
+    for it in items:
+        if it["hasSubs"]:
+            done_value += it["doneValue"]
+        else:
+            done_value += it["lastProgress"] / 100 * it["nilai"]
+    total = (done_value / nominal * 100) if nominal else 0
     return round(total, 2), items
 
 
@@ -333,6 +359,7 @@ async def delete_project(project_id: str, user: dict = Depends(get_current_user)
     for wi in items:
         await db.progress_entries.delete_many({"workItemId": wi["id"]})
     await db.work_items.delete_many({"project_id": project_id})
+    await db.sub_items.delete_many({"project_id": project_id})
     return {"ok": True}
 
 
@@ -478,6 +505,61 @@ async def delete_workitem(item_id: str, user: dict = Depends(require_premium)):
     await get_owned_project(wi["project_id"], user)
     await db.work_items.delete_one({"id": item_id})
     await db.progress_entries.delete_many({"workItemId": item_id})
+    await db.sub_items.delete_many({"work_item_id": item_id})
+    return {"ok": True}
+
+
+@api.post("/workitems/{item_id}/subitems")
+async def add_subitem(item_id: str, body: SubItemIn, user: dict = Depends(require_premium)):
+    wi = await db.work_items.find_one({"id": item_id}, {"_id": 0})
+    if not wi:
+        raise HTTPException(status_code=404, detail="Item tidak ditemukan")
+    await get_owned_project(wi["project_id"], user)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "work_item_id": item_id,
+        "project_id": wi["project_id"],
+        "name": body.name,
+        "harga": body.harga,
+        "status": body.status,
+        "createdAt": now_iso(),
+    }
+    await db.sub_items.insert_one(doc)
+    doc.pop("_id", None)
+    return {k: v for k, v in doc.items() if k != "project_id"}
+
+
+@api.get("/workitems/{item_id}/subitems")
+async def list_subitems(item_id: str, user: dict = Depends(require_premium)):
+    wi = await db.work_items.find_one({"id": item_id}, {"_id": 0})
+    if not wi:
+        raise HTTPException(status_code=404, detail="Item tidak ditemukan")
+    await get_owned_project(wi["project_id"], user)
+    subs = await db.sub_items.find({"work_item_id": item_id}, {"_id": 0}).sort("createdAt", 1).to_list(2000)
+    return [{k: v for k, v in s.items() if k != "project_id"} for s in subs]
+
+
+@api.put("/subitems/{sub_id}")
+async def update_subitem(sub_id: str, body: SubItemIn, user: dict = Depends(require_premium)):
+    sub = await db.sub_items.find_one({"id": sub_id}, {"_id": 0})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Sub item tidak ditemukan")
+    await get_owned_project(sub["project_id"], user)
+    await db.sub_items.update_one(
+        {"id": sub_id},
+        {"$set": {"name": body.name, "harga": body.harga, "status": body.status}},
+    )
+    doc = await db.sub_items.find_one({"id": sub_id}, {"_id": 0})
+    return {k: v for k, v in doc.items() if k != "project_id"}
+
+
+@api.delete("/subitems/{sub_id}")
+async def delete_subitem(sub_id: str, user: dict = Depends(require_premium)):
+    sub = await db.sub_items.find_one({"id": sub_id}, {"_id": 0})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Sub item tidak ditemukan")
+    await get_owned_project(sub["project_id"], user)
+    await db.sub_items.delete_one({"id": sub_id})
     return {"ok": True}
 
 

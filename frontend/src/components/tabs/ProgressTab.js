@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -15,7 +16,7 @@ import {
 import {
   ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
-import { Plus, Loader2, Trash2, ListChecks, Camera, Upload, TrendingUp, ChevronRight } from "lucide-react";
+import { Plus, Loader2, Trash2, ListChecks, Camera, TrendingUp, ChevronDown, Pencil, PackagePlus } from "lucide-react";
 import { rupiah, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
 
@@ -32,6 +33,12 @@ export function ProgressTab({ project }) {
   const [photos, setPhotos] = useState([]);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef();
+  const [expanded, setExpanded] = useState({});
+  const [subsMap, setSubsMap] = useState({});
+  const [subDialogOpen, setSubDialogOpen] = useState(false);
+  const [subForm, setSubForm] = useState({ name: "", harga: "", status: false });
+  const [subItemId, setSubItemId] = useState(null);
+  const [subParent, setSubParent] = useState(null);
 
   const load = async () => {
     try {
@@ -90,6 +97,44 @@ export function ProgressTab({ project }) {
     catch { toast.error("Gagal menghapus"); }
   };
 
+  const loadSubs = async (itemId) => {
+    try { const res = await api.get(`/workitems/${itemId}/subitems`); setSubsMap((m) => ({ ...m, [itemId]: res.data })); }
+    catch { toast.error("Gagal memuat sub item"); }
+  };
+
+  const toggleExpand = async (item) => {
+    const willOpen = !expanded[item.id];
+    setExpanded((e) => ({ ...e, [item.id]: willOpen }));
+    if (willOpen && !subsMap[item.id]) await loadSubs(item.id);
+  };
+
+  const openAddSub = (item) => { setSubParent(item); setSubItemId(null); setSubForm({ name: "", harga: "", status: false }); setSubDialogOpen(true); };
+  const openEditSub = (item, sub) => { setSubParent(item); setSubItemId(sub.id); setSubForm({ name: sub.name, harga: String(sub.harga || ""), status: !!sub.status }); setSubDialogOpen(true); };
+
+  const saveSub = async () => {
+    if (!subForm.name) return toast.error("Nama sub item wajib diisi");
+    setBusy(true);
+    try {
+      const payload = { name: subForm.name, harga: parseInt(subForm.harga || 0, 10), status: subForm.status };
+      if (subItemId) { await api.put(`/subitems/${subItemId}`, payload); toast.success("Sub item diperbarui"); }
+      else { await api.post(`/workitems/${subParent.id}/subitems`, payload); toast.success("Sub item ditambahkan"); }
+      setSubDialogOpen(false);
+      await loadSubs(subParent.id); await load();
+    } catch { toast.error("Gagal menyimpan sub item"); } finally { setBusy(false); }
+  };
+
+  const toggleSub = async (item, sub) => {
+    try {
+      await api.put(`/subitems/${sub.id}`, { name: sub.name, harga: sub.harga, status: !sub.status });
+      await loadSubs(item.id); await load();
+    } catch { toast.error("Gagal memperbarui status"); }
+  };
+
+  const deleteSub = async (item, sub) => {
+    try { await api.delete(`/subitems/${sub.id}`); await loadSubs(item.id); await load(); toast.success("Sub item dihapus"); }
+    catch { toast.error("Gagal menghapus"); }
+  };
+
   if (loading) return <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-amber-600" /></div>;
 
   const items = data?.items || [];
@@ -100,7 +145,7 @@ export function ProgressTab({ project }) {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="font-display font-bold text-lg text-slate-900">Progress Pekerjaan</h3>
-          <p className="text-xs text-slate-500">Progress total proyek (berbobot): <b className="text-amber-700 font-mono">{data?.totalProgress?.toFixed(1)}%</b></p>
+          <p className="text-xs text-slate-500">Progress total (cost-loaded): <b className="text-amber-700 font-mono">{data?.totalProgress?.toFixed(1)}%</b></p>
         </div>
         <Button data-testid="btn-add-workitem" size="sm" onClick={() => setAddItemOpen(true)} className="bg-amber-600 hover:bg-amber-700 text-white gap-1.5"><Plus className="w-4 h-4" /> Item</Button>
       </div>
@@ -131,31 +176,62 @@ export function ProgressTab({ project }) {
         </Card>
       ) : (
         <div className="space-y-2.5">
-          {items.map((it) => (
-            <Card data-testid={`workitem-card-${it.id}`} key={it.id} onClick={() => openLog(it)} className="p-4 border-slate-200 bg-white hover:shadow-sm transition-shadow cursor-pointer">
-              <div className="flex items-center gap-3">
-                <div className="min-w-0 flex-1">
+          {items.map((it) => {
+            const isOpen = !!expanded[it.id];
+            const subs = subsMap[it.id] || [];
+            return (
+            <Card data-testid={`workitem-card-${it.id}`} key={it.id} className="border-slate-200 bg-white overflow-hidden">
+              <div className="p-4 flex items-center gap-3">
+                <button data-testid={`workitem-toggle-${it.id}`} onClick={() => toggleExpand(it)} className="min-w-0 flex-1 text-left">
                   <div className="flex items-center gap-2">
+                    <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isOpen ? "" : "-rotate-90"}`} />
                     <span className="font-semibold text-slate-900 truncate">{it.name}</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-mono shrink-0">Bobot {it.weight.toFixed(1)}%</span>
                   </div>
-                  <div className="text-xs text-slate-500 mt-0.5">{rupiah(it.nilai)} · {it.entryCount} update</div>
-                  <Progress value={it.lastProgress} className="h-1.5 mt-2" />
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="font-mono font-bold text-lg text-slate-900">{it.lastProgress}%</div>
-                </div>
+                  <div className="text-xs text-slate-500 mt-0.5 pl-6">{rupiah(it.nilai)} · {it.subCount} sub item{it.hasSubs ? ` · selesai ${rupiah(it.doneValue)}` : (it.entryCount ? ` · ${it.entryCount} update` : "")}</div>
+                  <div className="pl-6"><Progress value={it.lastProgress} className="h-1.5 mt-2" /></div>
+                </button>
+                <div className="text-right shrink-0"><div className="font-mono font-bold text-lg text-slate-900">{Number(it.lastProgress).toFixed(0)}%</div></div>
+                <button data-testid={`workitem-log-${it.id}`} onClick={() => openLog(it)} title="Log Harian & Foto" className="text-slate-300 hover:text-amber-600 shrink-0"><Camera className="w-4 h-4" /></button>
                 <AlertDialog>
-                  <AlertDialogTrigger asChild><button data-testid={`delete-workitem-${it.id}`} onClick={(e) => e.stopPropagation()} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-4 h-4" /></button></AlertDialogTrigger>
-                  <AlertDialogContent className="bg-white" onClick={(e) => e.stopPropagation()}>
-                    <AlertDialogHeader><AlertDialogTitle>Hapus item pekerjaan?</AlertDialogTitle><AlertDialogDescription>Seluruh log progress item ini akan dihapus.</AlertDialogDescription></AlertDialogHeader>
+                  <AlertDialogTrigger asChild><button data-testid={`delete-workitem-${it.id}`} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-4 h-4" /></button></AlertDialogTrigger>
+                  <AlertDialogContent className="bg-white">
+                    <AlertDialogHeader><AlertDialogTitle>Hapus item pekerjaan?</AlertDialogTitle><AlertDialogDescription>Seluruh sub item & log progress item ini akan dihapus.</AlertDialogDescription></AlertDialogHeader>
                     <AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={() => removeItem(it.id)} className="bg-red-600 hover:bg-red-700">Hapus</AlertDialogAction></AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
-                <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
               </div>
+              {isOpen && (
+                <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-slate-500">Sub Item (RAB)</span>
+                    <Button data-testid={`btn-add-subitem-${it.id}`} size="sm" variant="outline" onClick={() => openAddSub(it)} className="h-7 gap-1 text-xs"><PackagePlus className="w-3.5 h-3.5" /> Sub Item</Button>
+                  </div>
+                  {subs.length === 0 ? (
+                    <p className="text-xs text-slate-400 py-2">Belum ada sub item. Tambahkan rincian RAB seperti "Rangka Hollow", "Pemasangan Gypsum".</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {subs.map((s) => (
+                        <div data-testid={`subitem-row-${s.id}`} key={s.id} className="flex items-center gap-2.5 bg-white rounded-lg border border-slate-200 px-3 py-2">
+                          <Checkbox data-testid={`subitem-check-${s.id}`} checked={!!s.status} onCheckedChange={() => toggleSub(it, s)} className="shrink-0 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600" />
+                          <div className="min-w-0 flex-1">
+                            <div className={`text-sm truncate ${s.status ? "line-through text-slate-400" : "text-slate-800"}`}>{s.name}</div>
+                            <div className="text-[11px] text-slate-500 font-mono">{rupiah(s.harga)}</div>
+                          </div>
+                          <button data-testid={`edit-subitem-${s.id}`} onClick={() => openEditSub(it, s)} className="text-slate-300 hover:text-amber-600 shrink-0"><Pencil className="w-3.5 h-3.5" /></button>
+                          <button data-testid={`delete-subitem-${s.id}`} onClick={() => deleteSub(it, s)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between pt-1.5 text-xs">
+                        <span className="text-slate-500">Total RAB: <b className="font-mono text-slate-700">{rupiah(it.subTotal)}</b></span>
+                        <span className="text-slate-500">Selesai: <b className="font-mono text-green-600">{rupiah(it.doneValue)}</b></span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </Card>
-          ))}
+          );})}
         </div>
       )}
 
@@ -164,7 +240,7 @@ export function ProgressTab({ project }) {
           <DialogHeader><DialogTitle className="font-display text-xl">Tambah Item Pekerjaan</DialogTitle></DialogHeader>
           <div className="space-y-3.5">
             <div><Label>Nama Item</Label><Input data-testid="workitem-name-input" value={itemForm.name} onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })} placeholder="Pekerjaan Plafon Gypsum" className="mt-1" /></div>
-            <div><Label>Nilai Item (Rp)</Label><Input data-testid="workitem-nilai-input" type="number" value={itemForm.nilai} onChange={(e) => setItemForm({ ...itemForm, nilai: e.target.value })} placeholder="90000000" className="mt-1 font-mono" /><p className="text-[11px] text-slate-400 mt-1">Bobot dihitung otomatis dari nilai kontrak proyek.</p></div>
+            <div><Label>Nilai Item (Rp) — opsional</Label><Input data-testid="workitem-nilai-input" type="number" value={itemForm.nilai} onChange={(e) => setItemForm({ ...itemForm, nilai: e.target.value })} placeholder="0" className="mt-1 font-mono" /><p className="text-[11px] text-slate-400 mt-1">Nilai akan dihitung otomatis dari total harga Sub Item (RAB). Isi manual bila belum ada rincian.</p></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddItemOpen(false)}>Batal</Button>
@@ -209,6 +285,21 @@ export function ProgressTab({ project }) {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={subDialogOpen} onOpenChange={setSubDialogOpen}>
+        <DialogContent className="bg-white max-w-sm">
+          <DialogHeader><DialogTitle className="font-display text-lg">{subItemId ? "Edit Sub Item" : "Tambah Sub Item"}</DialogTitle></DialogHeader>
+          <div className="space-y-3.5">
+            <div><Label>Nama Sub Item</Label><Input data-testid="subitem-name-input" value={subForm.name} onChange={(e) => setSubForm({ ...subForm, name: e.target.value })} placeholder="Rangka Hollow 4x4" className="mt-1" /></div>
+            <div><Label>Harga (Rp)</Label><Input data-testid="subitem-harga-input" type="number" value={subForm.harga} onChange={(e) => setSubForm({ ...subForm, harga: e.target.value })} placeholder="12000000" className="mt-1 font-mono" /></div>
+            <label className="flex items-center gap-2.5 cursor-pointer"><Checkbox data-testid="subitem-status-checkbox" checked={subForm.status} onCheckedChange={(v) => setSubForm({ ...subForm, status: !!v })} className="data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600" /><span className="text-sm text-slate-700">Tandai sudah selesai</span></label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSubDialogOpen(false)}>Batal</Button>
+            <Button data-testid="subitem-submit-button" onClick={saveSub} disabled={busy} className="bg-amber-600 hover:bg-amber-700 text-white">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Simpan"}</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
