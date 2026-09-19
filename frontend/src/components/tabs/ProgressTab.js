@@ -17,7 +17,7 @@ import {
 } from "recharts";
 import {
   Plus, Loader2, Trash2, ListChecks, Camera, TrendingUp, ChevronDown, Pencil, PackagePlus,
-  CalendarRange, Wallet, Save, FileDown, Share2, Copy, Check, MessageCircle,
+  CalendarRange, Wallet, Save, FileDown, Share2, Copy, Check, MessageCircle, X,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -151,9 +151,14 @@ export function ProgressTab({ project }) {
       setEntries(res.data);
     } catch { setEntries([]); }
   };
+  const MAX_PHOTOS = 10;
   const uploadPhoto = async (e) => {
-    const files = Array.from(e.target.files || []);
+    let files = Array.from(e.target.files || []);
+    if (fileRef.current) fileRef.current.value = "";
     if (!files.length) return;
+    const remaining = MAX_PHOTOS - photos.length;
+    if (remaining <= 0) { toast.error(`Maksimal ${MAX_PHOTOS} foto`); return; }
+    if (files.length > remaining) { toast.warning(`Hanya ${remaining} foto ditambahkan (maks ${MAX_PHOTOS})`); files = files.slice(0, remaining); }
     setUploading(true);
     try {
       for (const file of files) {
@@ -164,6 +169,7 @@ export function ProgressTab({ project }) {
       toast.success("Foto terunggah");
     } catch { toast.error("Gagal upload"); } finally { setUploading(false); }
   };
+  const removePhoto = (idx) => setPhotos((p) => p.filter((_, i) => i !== idx));
   const submitLog = async () => {
     setBusy(true);
     try {
@@ -408,10 +414,18 @@ export function ProgressTab({ project }) {
             <div><Label>Tanggal</Label><Input data-testid="log-date-input" type="date" value={logForm.date} onChange={(e) => setLogForm({ ...logForm, date: e.target.value })} className="mt-1" /></div>
             <div><Label>Catatan</Label><Textarea data-testid="log-notes-input" value={logForm.notes} onChange={(e) => setLogForm({ ...logForm, notes: e.target.value })} placeholder="Progress lapangan hari ini…" className="mt-1 resize-none" rows={2} /></div>
             <div>
-              <Label>Foto Dokumentasi</Label>
+              <div className="flex items-center justify-between">
+                <Label>Foto Dokumentasi</Label>
+                <span data-testid="photo-count" className="text-[11px] text-slate-400 font-mono">{photos.length}/{MAX_PHOTOS}</span>
+              </div>
               <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={uploadPhoto} />
-              <Button data-testid="log-upload-btn" type="button" variant="outline" onClick={() => fileRef.current?.click()} disabled={uploading} className="mt-1 w-full gap-2">{uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Upload Foto</Button>
-              {photos.length > 0 && <div className="grid grid-cols-3 gap-2 mt-2">{photos.map((p, i) => <img key={i} src={fileUrl(p)} alt="" className="w-full h-16 object-cover rounded-md border border-slate-200" />)}</div>}
+              <Button data-testid="log-upload-btn" type="button" variant="outline" onClick={() => fileRef.current?.click()} disabled={uploading || photos.length >= MAX_PHOTOS} className="mt-1 w-full gap-2">{uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} {photos.length >= MAX_PHOTOS ? "Maksimal 10 foto" : "Upload Foto"}</Button>
+              {photos.length > 0 && <div className="grid grid-cols-3 gap-2 mt-2">{photos.map((p, i) => (
+                <div key={i} className="relative group">
+                  <img src={fileUrl(p)} alt="" className="w-full h-16 object-cover rounded-md border border-slate-200" />
+                  <button type="button" onClick={() => removePhoto(i)} data-testid={`remove-photo-${i}`} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><X className="w-3 h-3" /></button>
+                </div>
+              ))}</div>}
             </div>
             <Button data-testid="log-submit-button" onClick={submitLog} disabled={busy} className="w-full bg-amber-600 hover:bg-amber-700 text-white">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Simpan Progress"}</Button>
 

@@ -6,7 +6,7 @@ import {
 } from "recharts";
 import {
   Loader2, Building2, MapPin, Calendar, TrendingUp, ListChecks, Images,
-  Wallet, ChevronDown, CheckCircle2, Clock,
+  Wallet, ChevronDown, CheckCircle2, Clock, Maximize2, X, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { rupiah, fmtDate } from "@/lib/format";
 
@@ -35,6 +35,7 @@ export default function ClientPortal() {
   const [data, setData] = useState(null);
   const [state, setState] = useState("loading");
   const [expanded, setExpanded] = useState({});
+  const [lightbox, setLightbox] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -68,6 +69,7 @@ export default function ClientPortal() {
   const items = data.items || [];
   const gallery = data.gallery || [];
   const payments = data.payments || [];
+  const totalPhotos = gallery.reduce((a, g) => a + g.photos.length, 0);
 
   const schedStart = data.start ? new Date(data.start).getTime() : 0;
   const schedEnd = data.end ? new Date(data.end).getTime() : 0;
@@ -210,22 +212,35 @@ export default function ClientPortal() {
         {/* Photo documentation */}
         {gallery.length > 0 && (
           <section className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-            <div className="flex items-center gap-2 mb-4"><Images className="w-4 h-4 text-amber-600" /><h2 className="font-display font-bold text-slate-900">Dokumentasi Lapangan</h2></div>
-            <div className="space-y-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Images className="w-4 h-4 text-amber-600" />
+              <h2 className="font-display font-bold text-slate-900">Dokumentasi Lapangan</h2>
+              <span className="ml-auto text-xs text-slate-400 font-mono">{totalPhotos} foto</span>
+            </div>
+            <div className="space-y-6">
               {gallery.map((g, i) => (
                 <div key={i} data-testid={`portal-gallery-${i}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="min-w-0">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-1 self-stretch rounded-full bg-gradient-to-b from-amber-400 to-amber-600" />
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold text-slate-800 truncate">{g.label}</div>
                       <div className="text-[11px] text-slate-400">{fmtDate(g.date)}{g.notes ? ` · ${g.notes}` : ""}</div>
                     </div>
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-mono shrink-0">{g.progress}%</span>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div className="columns-2 sm:columns-3 lg:columns-4 gap-2.5">
                     {g.photos.map((ph, j) => (
-                      <a key={j} href={`${BACKEND_URL}${ph}`} target="_blank" rel="noreferrer">
-                        <img src={`${BACKEND_URL}${ph}`} alt="" className="w-full h-24 object-cover rounded-lg border border-slate-200 hover:opacity-90 transition-opacity" />
-                      </a>
+                      <button
+                        key={j}
+                        onClick={() => setLightbox({ photos: g.photos, index: j, label: g.label })}
+                        data-testid={`portal-photo-${i}-${j}`}
+                        className="mb-2.5 block w-full break-inside-avoid group relative overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
+                      >
+                        <img src={`${BACKEND_URL}${ph}`} alt="" loading="lazy" className="w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                        <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/25 transition-colors flex items-center justify-center">
+                          <Maximize2 className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+                        </div>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -238,6 +253,21 @@ export default function ClientPortal() {
           <p className="text-xs text-slate-400">Progress diperbarui secara realtime oleh kontraktor · Powered by <span className="font-semibold text-amber-600">ProFinance Interior</span></p>
         </footer>
       </main>
+
+      {/* Lightbox */}
+      {lightbox && (
+        <div className="fixed inset-0 z-50 bg-slate-950/95 flex items-center justify-center backdrop-blur-sm" onClick={() => setLightbox(null)} data-testid="portal-lightbox">
+          <button className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors" onClick={() => setLightbox(null)} data-testid="lightbox-close"><X className="w-7 h-7" /></button>
+          <div className="absolute top-4 left-4 text-white/70 text-sm max-w-[65%] truncate">{lightbox.label} · {lightbox.index + 1}/{lightbox.photos.length}</div>
+          {lightbox.photos.length > 1 && (
+            <button data-testid="lightbox-prev" className="absolute left-2 sm:left-6 text-white/60 hover:text-white transition-colors p-2" onClick={(e) => { e.stopPropagation(); setLightbox((l) => ({ ...l, index: (l.index - 1 + l.photos.length) % l.photos.length })); }}><ChevronLeft className="w-8 h-8" /></button>
+          )}
+          <img src={`${BACKEND_URL}${lightbox.photos[lightbox.index]}`} alt="" className="max-h-[85vh] max-w-[88vw] object-contain rounded-lg shadow-2xl" onClick={(e) => e.stopPropagation()} />
+          {lightbox.photos.length > 1 && (
+            <button data-testid="lightbox-next" className="absolute right-2 sm:right-6 text-white/60 hover:text-white transition-colors p-2" onClick={(e) => { e.stopPropagation(); setLightbox((l) => ({ ...l, index: (l.index + 1) % l.photos.length })); }}><ChevronRight className="w-8 h-8" /></button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
