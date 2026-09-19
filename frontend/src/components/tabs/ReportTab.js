@@ -45,7 +45,7 @@ export function ReportTab({ project }) {
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-display font-bold text-lg text-slate-900">Laporan & Analytics</h3>
         <Button data-testid="btn-export-pdf" onClick={exportPdf} disabled={exporting} className="bg-slate-900 hover:bg-slate-800 text-white gap-2">
-          {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Export PDF
+          {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Laporan Internal PDF
         </Button>
       </div>
 
