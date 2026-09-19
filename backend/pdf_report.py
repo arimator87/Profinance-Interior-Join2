@@ -372,37 +372,248 @@ def build_report_pdf(project, summary, transactions, workers, work_items, progre
         ]))
         story.append(wt)
 
-    # Progress documentation with photos
-    if work_items:
-        has_photos = any(pe.get("photoUrls") for pe in progress_entries)
-        entries_by_item = {}
-        for pe in progress_entries:
-            entries_by_item.setdefault(pe.get("workItemId"), []).append(pe)
-        if has_photos or any(entries_by_item.get(wi["id"]) for wi in work_items):
-            story.append(section("DOKUMENTASI PROGRESS PEKERJAAN"))
-            for wi in work_items:
-                ents = entries_by_item.get(wi["id"], [])
-                if not ents:
-                    continue
-                story.append(Paragraph(
-                    f"<b>{wi.get('name','-')}</b> &nbsp;<font color='#64748B' size=8>(Bobot {wi.get('weight',0):.1f}% &bull; Progress {wi.get('lastProgress',0)}%)</font>",
-                    st_norm))
-                for pe in ents:
-                    story.append(Paragraph(
-                        f"<font color='#64748B' size=8>{_fmt(pe.get('date'))} \u2014 {pe.get('progress',0)}% \u2014 {(pe.get('notes','') or '')[:90]}</font>",
-                        st_small))
-                    imgs = []
-                    for path in (pe.get("photoUrls") or [])[:4]:
-                        try:
-                            content, _ = get_object(path)
-                            imgs.append(RLImage(io.BytesIO(content), width=40 * mm, height=30 * mm, kind="proportional"))
-                        except Exception as e:
-                            logger.warning(f"pdf image fail {path}: {e}")
-                    if imgs:
-                        ph = Table([imgs], colWidths=[43 * mm] * len(imgs))
-                        ph.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
-                        story.append(ph)
-                story.append(Spacer(1, 6))
+    doc.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
+    buf.seek(0)
+    return buf.read()
+
+
+def _scurve(curve, width, height=150):
+    from reportlab.graphics.charts.lineplots import LinePlot
+    from reportlab.graphics.widgets.markers import makeMarker
+    d = Drawing(width, height)
+    if not curve:
+        return d
+    planned = [(i, c["planned"]) for i, c in enumerate(curve)]
+    actual = [(i, c["actual"]) for i, c in enumerate(curve)]
+    lp = LinePlot()
+    lp.x, lp.y, lp.width, lp.height = 34, 26, width - 50, height - 42
+    lp.data = [planned, actual]
+    lp.lines[0].strokeColor = BLUE
+    lp.lines[0].strokeWidth = 2
+    lp.lines[1].strokeColor = AMBER
+    lp.lines[1].strokeWidth = 2.5
+    lp.lines[1].symbol = makeMarker("FilledCircle", size=4, fillColor=AMBER)
+    lp.yValueAxis.valueMin = 0
+    lp.yValueAxis.valueMax = 100
+    lp.yValueAxis.valueStep = 25
+    lp.yValueAxis.labelTextFormat = "%d%%"
+    lp.yValueAxis.labels.fontSize = 7
+    lp.xValueAxis.valueMin = 0
+    lp.xValueAxis.valueMax = max(len(curve) - 1, 1)
+    lp.xValueAxis.valueStep = max(1, (len(curve) - 1) // 5 or 1)
+    lp.xValueAxis.labels.fontSize = 6
+    n = len(curve)
+    lp.xValueAxis.labelTextFormat = lambda v: (curve[int(v)]["date"][5:] if 0 <= int(v) < n else "")
+    d.add(lp)
+    return d
+
+
+def build_progress_pdf(project, summary, prog, transactions, entries_by_key):
+    company = (project.get("companyName") or "ProFinance Interior").upper()
+    published = datetime.now().strftime("%d/%m/%Y, %H.%M")
+    NAVY = colors.HexColor("#1E3A8A")
+
+    def draw_page(canvas, doc):
+        w, h = A4
+        canvas.setFillColor(INK)
+        canvas.rect(0, h - 22 * mm, w, 22 * mm, fill=1, stroke=0)
+        canvas.setFillColor(WHITE)
+        canvas.setFont("Helvetica-Bold", 13)
+        canvas.drawString(15 * mm, h - 12 * mm, company)
+        canvas.setFillColor(colors.HexColor("#93C5FD"))
+        canvas.setFont("Helvetica", 7.5)
+        canvas.drawString(15 * mm, h - 17 * mm, "LAPORAN PROGRES RESMI PROYEK")
+        canvas.setFillColor(colors.HexColor("#1D4ED8"))
+        canvas.roundRect(w - 52 * mm, h - 15 * mm, 37 * mm, 7 * mm, 3.5 * mm, fill=1, stroke=0)
+        canvas.setFillColor(WHITE)
+        canvas.setFont("Helvetica-Bold", 7.5)
+        canvas.drawCentredString(w - 33.5 * mm, h - 12.6 * mm, "PROGRES RESMI")
+        canvas.setFillColor(INK)
+        canvas.rect(0, 0, w, 12 * mm, fill=1, stroke=0)
+        canvas.setFillColor(colors.HexColor("#CBD5E1"))
+        canvas.setFont("Helvetica", 7)
+        canvas.drawString(15 * mm, 4.6 * mm, f"{company}  \u2022  Laporan Progres Resmi")
+        canvas.drawRightString(w - 15 * mm, 4.6 * mm, f"Diterbitkan: {published}  \u2022  Hal {canvas.getPageNumber()}")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm, topMargin=28 * mm, bottomMargin=16 * mm)
+    content_w = A4[0] - 30 * mm
+    styles = getSampleStyleSheet()
+    st_kick = ParagraphStyle("k", parent=styles["Normal"], fontSize=9, textColor=BLUE, fontName="Helvetica-Bold", spaceAfter=2)
+    st_title = ParagraphStyle("t", parent=styles["Normal"], fontSize=24, leading=28, textColor=NAVY, fontName="Helvetica-Bold")
+    st_sub = ParagraphStyle("su", parent=styles["Normal"], fontSize=11, leading=15, textColor=SLATE, spaceAfter=6)
+    st_small = ParagraphStyle("sm", parent=styles["Normal"], fontSize=8.5, textColor=SLATE)
+    st_sec = ParagraphStyle("se", parent=styles["Normal"], fontSize=12.5, textColor=NAVY, fontName="Helvetica-Bold")
+    st_norm = ParagraphStyle("n", parent=styles["Normal"], fontSize=9, leading=13, textColor=INK)
+    st_cell = ParagraphStyle("c", parent=styles["Normal"], fontSize=8.5, leading=11, textColor=INK)
+    story = []
+
+    def section(title):
+        t = Table([[Paragraph(title, st_sec)]], colWidths=[content_w])
+        t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                               ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                               ("LINEBELOW", (0, 0), (-1, -1), 2, BLUE)]))
+        return t
+
+    nominal = summary.get("nominal", 0)
+    terbayar = summary["terbayar"]
+    sisa = summary["sisaTagihan"]
+    realisasi = summary["realisasiPct"]
+    actual = prog.get("totalProgress", 0)
+    planned = prog.get("plannedProgress", 0)
+    items = prog.get("items", [])
+
+    # Cover
+    story.append(Paragraph("LAPORAN PROGRES RESMI", st_kick))
+    story.append(Paragraph(project.get("name", "-"), st_title))
+    story.append(Paragraph(f"Kepada: <b>{project.get('owner') or '-'}</b> &nbsp;&bull;&nbsp; Lokasi: {project.get('alamatProyek') or '-'}", st_sub))
+
+    info = Table([[
+        Paragraph(f"<font size=7.5 color='#BFDBFE'>NAMA PROYEK</font><br/><b>{project.get('name','-')}</b><br/><br/>"
+                  f"<font size=7.5 color='#BFDBFE'>NILAI KONTRAK</font><br/><b>{rupiah(nominal)}</b>", ParagraphStyle("i1", parent=st_norm, textColor=WHITE, leading=14)),
+        Paragraph(f"<font size=7.5 color='#BFDBFE'>PEMILIK / KLIEN</font><br/><b>{project.get('owner') or '-'}</b><br/><br/>"
+                  f"<font size=7.5 color='#BFDBFE'>TARGET SELESAI</font><br/><b>{_fmt(project.get('targetSelesai'))}</b>", ParagraphStyle("i2", parent=st_norm, textColor=WHITE, leading=14)),
+    ]], colWidths=[content_w / 2, content_w / 2])
+    info.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), NAVY), ("TOPPADDING", (0, 0), (-1, -1), 14),
+                              ("BOTTOMPADDING", (0, 0), (-1, -1), 14), ("LEFTPADDING", (0, 0), (-1, -1), 16), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(Spacer(1, 8))
+    story.append(info)
+
+    # Payment cards
+    def card(t, v, d):
+        return Paragraph(f"<font size=7.5 color='#64748B'>{t}</font><br/><font size=13 color='{NAVY.hexval()}'><b>{v}</b></font><br/><font size=7 color='#94A3B8'>{d}</font>",
+                         ParagraphStyle("cd", parent=st_norm, leading=16))
+    pc = Table([[card("NILAI KONTRAK", rupiah(nominal), "Total nilai pekerjaan"),
+                 card("TOTAL TERBAYAR", rupiah(terbayar), f"{realisasi:.0f}% dari nilai kontrak"),
+                 card("SISA PEMBAYARAN", rupiah(sisa), "Ditagih saat serah terima")]],
+                colWidths=[content_w / 3] * 3)
+    pc.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), BG), ("BOX", (0, 0), (-1, -1), 0.6, LINE), ("INNERGRID", (0, 0), (-1, -1), 6, WHITE),
+                            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [BG]), ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 12), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            ("LINEBEFORE", (0, 0), (0, 0), 3, NAVY), ("LINEBEFORE", (1, 0), (1, 0), 3, GREEN), ("LINEBEFORE", (2, 0), (2, 0), 3, ORANGE)]))
+    story.append(Spacer(1, 8))
+    story.append(pc)
+
+    # Realisasi pembayaran
+    story.append(section("REALISASI PEMBAYARAN"))
+    frac = (terbayar / nominal) if nominal else 0
+    rr = Table([[Paragraph(f"<b>Progress Penagihan</b>  Rp 0 &rarr; {rupiah(nominal)}", st_small),
+                 Paragraph(f"<font size=15 color='{NAVY.hexval()}'><b>{realisasi:.0f}%</b></font>", ParagraphStyle("rp", parent=st_norm, alignment=TA_RIGHT))],
+                [_bar(content_w - 28, frac, ORANGE, h=11), ""]],
+               colWidths=[content_w * 0.7, content_w * 0.3 - 28])
+    rr.setStyle(TableStyle([("SPAN", (0, 1), (1, 1)), ("BACKGROUND", (0, 0), (-1, -1), BG), ("BOX", (0, 0), (-1, -1), 0.6, LINE),
+                            ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 14), ("RIGHTPADDING", (0, 0), (-1, -1), 14), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    story.append(rr)
+
+    # Payment termin history
+    story.append(section("RIWAYAT & JADWAL PEMBAYARAN TERMIN"))
+    paid_cats = {"Downpayment", "Termin", "Pelunasan"}
+    pays = [t for t in transactions if t.get("type") == "in" and t.get("category") in paid_cats]
+    pays = sorted(pays, key=lambda x: x.get("date", ""))
+    rows = [["#", "TANGGAL", "KETERANGAN", "JUMLAH", "STATUS"]]
+    for i, t in enumerate(pays, 1):
+        rows.append([str(i), _fmt(t.get("date")), (t.get("description") or t.get("category"))[:40], rupiah(t.get("amount", 0)), "Diterima"])
+    wait_row = len(rows)
+    if sisa > 0:
+        rows.append([str(len(pays) + 1), "-", "Sisa Pembayaran (Serah Terima)", rupiah(sisa), "Menunggu"])
+    pt = Table(rows, colWidths=[content_w * 0.06, content_w * 0.2, content_w * 0.42, content_w * 0.2, content_w * 0.12], repeatRows=1)
+    pst = [("FONTSIZE", (0, 0), (-1, -1), 8), ("BACKGROUND", (0, 0), (-1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+           ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, BG]), ("GRID", (0, 0), (-1, -1), 0.4, LINE),
+           ("ALIGN", (3, 0), (3, -1), "RIGHT"), ("ALIGN", (0, 0), (0, -1), "CENTER"), ("ALIGN", (4, 0), (4, -1), "CENTER"),
+           ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]
+    for r in range(1, len(rows)):
+        if rows[r][4] == "Diterima":
+            pst += [("BACKGROUND", (4, r), (4, r), colors.HexColor("#DCFCE7")), ("TEXTCOLOR", (4, r), (4, r), colors.HexColor("#15803D"))]
+        else:
+            pst += [("BACKGROUND", (4, r), (4, r), colors.HexColor("#FEF9C3")), ("TEXTCOLOR", (4, r), (4, r), colors.HexColor("#A16207"))]
+    pt.setStyle(TableStyle(pst))
+    story.append(pt)
+    if sisa > 0:
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(f"<font color='#2563EB'>&#9432;</font> <b>Catatan:</b> Sisa pembayaran {rupiah(sisa)} akan ditagihkan pada saat serah terima proyek.", st_small))
+
+    # S-Curve
+    story.append(section("PROGRESS PER AREA PEKERJAAN"))
+    story.append(Paragraph("<b>KURVA S \u2014 Rencana vs Realisasi</b> &nbsp;<font size=8 color='#64748B'>(bobot tertimbang seluruh area)</font>", st_norm))
+    sc = Table([[_scurve(prog.get("curve", []), content_w * 0.66),
+                 Paragraph(f"<font size=8 color='#64748B'>Progress Tertimbang</font><br/><font size=26 color='{NAVY.hexval()}'><b>{actual:.1f}%</b></font><br/>"
+                           f"<font size=8 color='#64748B'>Rencana s/d kini</font><br/><font size=13 color='{BLUE.hexval()}'><b>{planned:.1f}%</b></font>",
+                           ParagraphStyle("scr", parent=st_norm, leading=20, alignment=TA_CENTER))]],
+               colWidths=[content_w * 0.66, content_w * 0.34])
+    sc.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), BG), ("BOX", (0, 0), (-1, -1), 0.6, LINE), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                            ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
+    story.append(Spacer(1, 6))
+    story.append(sc)
+
+    # Area progress cards
+    if items:
+        cells = []
+        for it in items:
+            kontrib = it["weight"] * it["lastProgress"] / 100
+            status = "Selesai" if it["lastProgress"] >= 100 else ("Berjalan" if it["lastProgress"] > 0 else "Belum Mulai")
+            scol = GREEN if it["lastProgress"] >= 100 else (AMBER if it["lastProgress"] > 0 else SLATE)
+            cells.append(Paragraph(
+                f"<b>{it['name'][:34]}</b><br/><font size=7 color='#64748B'>Bobot {it['weight']:.2f}% &bull; Kontribusi {kontrib:.1f}%</font><br/>"
+                f"<font size=16 color='{NAVY.hexval()}'><b>{int(round(it['lastProgress']))}%</b></font> <font size=8 color='{scol.hexval()}'>&bull; {status}</font>",
+                ParagraphStyle("ac", parent=st_norm, leading=15)))
+        while len(cells) % 2:
+            cells.append(Paragraph("", st_norm))
+        grid = [cells[i:i + 2] for i in range(0, len(cells), 2)]
+        gt = Table(grid, colWidths=[content_w / 2, content_w / 2])
+        gt.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), WHITE), ("BOX", (0, 0), (-1, -1), 0.6, LINE), ("INNERGRID", (0, 0), (-1, -1), 6, WHITE),
+                                ("ROWBACKGROUNDS", (0, 0), (-1, -1), [BG, BG]), ("TOPPADDING", (0, 0), (-1, -1), 10), ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 12), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+        story.append(Spacer(1, 8))
+        story.append(gt)
+
+    # Detailed per-area update history + photos
+    for it in items:
+        ents = entries_by_key.get(("item", it["id"]), [])
+        subs = it.get("subItems", [])
+        if not ents and not subs:
+            continue
+        story.append(Spacer(1, 8))
+        story.append(Paragraph(f"<b>{it['name']}</b> &nbsp;<font size=8 color='#64748B'>Bobot {it['weight']:.2f}% &bull; Progress {int(round(it['lastProgress']))}%</font>", st_norm))
+
+        def hist_table(rowsrc):
+            hr = [["TANGGAL", "PROGRESS", "CATATAN", "FOTO"]]
+            photo_cells = []
+            for pe in rowsrc:
+                imgs = []
+                for path in (pe.get("photoUrls") or [])[:3]:
+                    try:
+                        c, _ = get_object(path)
+                        imgs.append(RLImage(io.BytesIO(c), width=18 * mm, height=14 * mm, kind="proportional"))
+                    except Exception as e:
+                        logger.warning(f"progress pdf img {path}: {e}")
+                pcell = Table([imgs], colWidths=[19 * mm] * len(imgs)) if imgs else Paragraph("-", st_cell)
+                hr.append([_fmt(pe.get("date")), f"{pe.get('progress',0)}%", Paragraph((pe.get("notes", "") or "")[:70], st_cell), pcell])
+            t = Table(hr, colWidths=[content_w * 0.16, content_w * 0.12, content_w * 0.42, content_w * 0.30], repeatRows=1)
+            t.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 8), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+                                   ("TEXTCOLOR", (0, 0), (-1, 0), INK), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                                   ("GRID", (0, 0), (-1, -1), 0.4, LINE), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                   ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4), ("LEFTPADDING", (0, 0), (-1, -1), 5)]))
+            return t
+
+        if subs:
+            for s in subs:
+                sents = entries_by_key.get(("sub", s["id"]), [])
+                story.append(Paragraph(f"&nbsp;&nbsp;<font color='#1E3A8A'>&#9642;</font> <b>{s['name']}</b> <font size=7.5 color='#64748B'>({s['weight']:.2f}% &bull; {s['lastProgress']}%)</font>", st_cell))
+                if sents:
+                    story.append(hist_table(sents))
+                    story.append(Spacer(1, 3))
+        elif ents:
+            story.append(hist_table(ents))
+
+    # Signatures
+    story.append(Spacer(1, 16))
+    story.append(section("PERSETUJUAN & TANDA TANGAN"))
+    sig = Table([[Paragraph("Dibuat oleh,<br/><br/><br/><br/>________________________<br/><b>Kontraktor Pelaksana</b>", ParagraphStyle("s1", parent=st_norm, leading=15, alignment=TA_CENTER)),
+                  Paragraph(f"Diterima oleh,<br/><br/><br/><br/>________________________<br/><b>{project.get('owner') or 'Klien'}</b>", ParagraphStyle("s2", parent=st_norm, leading=15, alignment=TA_CENTER))]],
+                colWidths=[content_w / 2, content_w / 2])
+    sig.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 16), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(sig)
 
     doc.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
     buf.seek(0)

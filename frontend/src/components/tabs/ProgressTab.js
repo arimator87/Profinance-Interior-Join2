@@ -17,7 +17,7 @@ import {
 } from "recharts";
 import {
   Plus, Loader2, Trash2, ListChecks, Camera, TrendingUp, ChevronDown, Pencil, PackagePlus,
-  CalendarRange, Wallet, Save,
+  CalendarRange, Wallet, Save, FileDown,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -37,6 +37,20 @@ export function ProgressTab({ project }) {
   const [itemForm, setItemForm] = useState({ id: null, name: "", nilai: "", startDate: "", endDate: "" });
 
   const [subOpen, setSubOpen] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+
+  const exportProgressPdf = async () => {
+    setExportingPdf(true);
+    try {
+      const res = await api.get(`/projects/${project.id}/progress/pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = `Laporan-Progress-${project.name}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Laporan Progress PDF diunduh");
+    } catch { toast.error("Gagal export laporan progress"); } finally { setExportingPdf(false); }
+  };
   const [subForm, setSubForm] = useState({ id: null, name: "", harga: "" });
   const [subParent, setSubParent] = useState(null);
 
@@ -189,7 +203,12 @@ export function ProgressTab({ project }) {
 
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-display font-bold text-lg text-slate-900">Item Pekerjaan (RAB)</h3>
-        <Button data-testid="btn-add-workitem" size="sm" onClick={openAddItem} className="bg-amber-600 hover:bg-amber-700 text-white gap-1.5"><Plus className="w-4 h-4" /> Item</Button>
+        <div className="flex gap-2">
+          <Button data-testid="btn-progress-pdf" size="sm" variant="outline" onClick={exportProgressPdf} disabled={exportingPdf} className="gap-1.5">
+            {exportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Laporan Progress PDF
+          </Button>
+          <Button data-testid="btn-add-workitem" size="sm" onClick={openAddItem} className="bg-amber-600 hover:bg-amber-700 text-white gap-1.5"><Plus className="w-4 h-4" /> Item</Button>
+        </div>
       </div>
 
       {/* S-Curve */}

@@ -23,7 +23,7 @@ from auth import (
     register_email_user, login_email_user, process_google_session, user_public,
 )
 from storage import init_storage, put_object, get_object, APP_NAME, MIME_TYPES
-from pdf_report import build_report_pdf
+from pdf_report import build_report_pdf, build_progress_pdf
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -799,6 +799,32 @@ async def report_pdf(project_id: str, request: Request, auth: Optional[str] = Qu
         iter([pdf_bytes]),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="Laporan-{safe_name}.pdf"'},
+    )
+
+
+@api.get("/projects/{project_id}/progress/pdf")
+async def progress_pdf(project_id: str, request: Request, auth: Optional[str] = Query(None)):
+    user = await _user_from_request_or_query(request, auth)
+    await require_premium(user)
+    p = await get_owned_project(project_id, user)
+    summary = await compute_summary(p)
+    prog = await progress_summary(project_id, user)
+    txs = await db.transactions.find({"project_id": project_id}, {"_id": 0}).sort("date", 1).to_list(5000)
+    item_ids = [i["id"] for i in prog.get("items", [])]
+    entries = await db.progress_entries.find(
+        {"workItemId": {"$in": item_ids}}, {"_id": 0}
+    ).sort("date", 1).to_list(5000)
+    entries_by_key = {}
+    for e in entries:
+        sid = e.get("subItemId")
+        key = ("sub", sid) if sid else ("item", e.get("workItemId"))
+        entries_by_key.setdefault(key, []).append(e)
+    pdf_bytes = build_progress_pdf(p, summary, prog, txs, entries_by_key)
+    safe_name = "".join(c for c in p.get("name", "progress") if c.isalnum() or c in " -_")[:40].strip() or "progress"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="Laporan-Progress-{safe_name}.pdf"'},
     )
 
 
