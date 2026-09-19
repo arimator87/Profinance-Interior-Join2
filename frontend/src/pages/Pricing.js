@@ -5,36 +5,81 @@ import { useAuth } from "@/context/AuthContext";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { motion } from "framer-motion";
-import { Check, Crown, Sparkles, ArrowLeft, Loader2, QrCode, Building, Wallet } from "lucide-react";
+import { Check, Crown, Sparkles, ArrowLeft, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 const FREE = ["Proyek tanpa batas", "Cash Flow (transaksi masuk/keluar)", "Manajemen Kasbon & Pelunasan Tukang", "Indikator kesehatan finansial", "Upload foto nota"];
-const PREMIUM = ["Semua fitur Free", "Progress Pekerjaan & Kurva-S", "Upload dokumentasi foto harian", "Laporan visual (Pie & Bar Chart)", "Export Laporan PDF profesional", "Prioritas dukungan"];
+const PREMIUM = ["Semua fitur Free", "Progress Pekerjaan & Kurva-S", "Impor RAB dari Excel", "Portal Klien realtime + WhatsApp", "Baseline vs Revisi RAB", "Export Laporan PDF profesional", "Prioritas dukungan"];
+
+function loadSnap(clientKey, production) {
+  return new Promise((resolve, reject) => {
+    if (window.snap) return resolve();
+    const existing = document.getElementById("midtrans-snap");
+    if (existing) existing.remove();
+    const sc = document.createElement("script");
+    sc.id = "midtrans-snap";
+    sc.src = production ? "https://app.midtrans.com/snap/snap.js" : "https://app.sandbox.midtrans.com/snap/snap.js";
+    sc.async = true;
+    sc.setAttribute("data-client-key", clientKey);
+    sc.onload = () => resolve();
+    sc.onerror = () => reject(new Error("snap load failed"));
+    document.head.appendChild(sc);
+  });
+}
 
 export default function Pricing() {
   const navigate = useNavigate();
   const { isPremium, refreshUser } = useAuth();
-  const [payOpen, setPayOpen] = useState(false);
-  const [plan, setPlan] = useState("monthly");
-  const [method, setMethod] = useState("qris");
   const [busy, setBusy] = useState(false);
 
-  const openPay = (p) => { setPlan(p); setPayOpen(true); };
+  const pollOrder = async (orderId) => {
+    for (let i = 0; i < 12; i++) {
+      try {
+        const { data } = await api.get(`/subscription/order/${orderId}`);
+        if (data.status === "paid") return true;
+        if (["deny", "cancel", "expire", "create_failed"].includes(data.status)) return false;
+      } catch { /* keep polling */ }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    return null;
+  };
 
-  const pay = async () => {
+  const onPaid = async () => {
+    await refreshUser();
+    toast.success("Pembayaran berhasil! Premium aktif 🎉");
+    setTimeout(() => navigate("/dashboard"), 900);
+  };
+
+  const settle = async (orderId) => {
+    const ok = await pollOrder(orderId);
+    if (ok) { await onPaid(); }
+    else {
+      toast.info("Menunggu konfirmasi pembayaran. Premium aktif otomatis setelah dikonfirmasi.");
+      setBusy(false);
+    }
+  };
+
+  const upgrade = async (plan) => {
     setBusy(true);
     try {
-      await new Promise((r) => setTimeout(r, 1200));
-      await api.post("/subscription/upgrade", { plan });
-      await refreshUser();
-      toast.success("Pembayaran berhasil! Premium aktif 🎉");
-      setPayOpen(false);
-      setTimeout(() => navigate("/dashboard"), 600);
-    } catch {
-      toast.error("Gagal memproses pembayaran");
-    } finally {
+      const { data } = await api.post("/subscription/checkout", { plan });
+      await loadSnap(data.client_key, data.production);
+      if (!window.snap) {
+        if (data.redirect_url) window.location.assign(data.redirect_url);
+        return;
+      }
+      window.snap.pay(data.token, {
+        onSuccess: () => settle(data.order_id),
+        onPending: () => {
+          toast.info("Pembayaran diproses. Selesaikan pembayaran QRIS/GoPay/VA Anda.");
+          settle(data.order_id);
+        },
+        onError: () => { toast.error("Pembayaran gagal"); setBusy(false); },
+        onClose: () => { setBusy(false); },
+      });
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal memproses pembayaran");
       setBusy(false);
     }
   };
@@ -84,45 +129,21 @@ export default function Pricing() {
                 <Button className="w-full bg-green-600 hover:bg-green-600 text-white gap-2" disabled><Crown className="w-4 h-4" /> Premium Aktif</Button>
               ) : (
                 <div className="space-y-2">
-                  <Button data-testid="btn-upgrade-premium" onClick={() => openPay("monthly")} className="w-full bg-amber-600 hover:bg-amber-700 text-white gap-2"><Crown className="w-4 h-4" /> Upgrade Bulanan</Button>
-                  <Button data-testid="btn-upgrade-yearly" variant="outline" onClick={() => openPay("yearly")} className="w-full border-amber-300 text-amber-700 hover:bg-amber-50">Upgrade Tahunan (Hemat)</Button>
+                  <Button data-testid="btn-upgrade-premium" onClick={() => upgrade("monthly")} disabled={busy} className="w-full bg-amber-600 hover:bg-amber-700 text-white gap-2">
+                    {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crown className="w-4 h-4" />} Bayar Bulanan · Rp 149.000
+                  </Button>
+                  <Button data-testid="btn-upgrade-yearly" variant="outline" onClick={() => upgrade("yearly")} disabled={busy} className="w-full border-amber-300 text-amber-700 hover:bg-amber-50">
+                    Bayar Tahunan · Rp 1.290.000 (Hemat)
+                  </Button>
+                  <p className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400 pt-1">
+                    <ShieldCheck className="w-3.5 h-3.5" /> Pembayaran aman via Midtrans — QRIS, GoPay & VA Bank
+                  </p>
                 </div>
               )}
             </Card>
           </motion.div>
         </div>
       </main>
-
-      <Dialog open={payOpen} onOpenChange={setPayOpen}>
-        <DialogContent className="bg-white max-w-md">
-          <DialogHeader><DialogTitle className="font-display text-xl">Pembayaran (Simulasi)</DialogTitle></DialogHeader>
-          <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 flex items-center justify-between">
-            <span className="text-sm text-slate-600">{plan === "yearly" ? "Premium Tahunan" : "Premium Bulanan"}</span>
-            <span className="font-mono font-bold text-lg">{plan === "yearly" ? "Rp 1.290.000" : "Rp 149.000"}</span>
-          </div>
-          <div className="grid grid-cols-3 gap-2 mt-2">
-            {[{ k: "qris", l: "QRIS", i: QrCode }, { k: "bank", l: "Transfer", i: Building }, { k: "ewallet", l: "E-Wallet", i: Wallet }].map((m) => (
-              <button key={m.k} data-testid={`pay-method-${m.k}`} onClick={() => setMethod(m.k)}
-                className={`p-3 rounded-lg border text-center transition-colors ${method === m.k ? "border-amber-500 bg-amber-50" : "border-slate-200 hover:border-slate-300"}`}>
-                <m.i className={`w-5 h-5 mx-auto mb-1 ${method === m.k ? "text-amber-600" : "text-slate-400"}`} />
-                <span className="text-xs font-medium text-slate-700">{m.l}</span>
-              </button>
-            ))}
-          </div>
-          {method === "qris" && (
-            <div className="flex flex-col items-center py-3">
-              <div className="w-40 h-40 bg-white border-2 border-slate-200 rounded-xl flex items-center justify-center"><QrCode className="w-24 h-24 text-slate-800" /></div>
-              <p className="text-xs text-slate-400 mt-2">Scan untuk membayar (demo)</p>
-            </div>
-          )}
-          {method === "bank" && <p className="text-sm text-slate-600 py-3 text-center">Transfer ke <b>BCA 1234567890</b> a.n. ProFinance Interior</p>}
-          {method === "ewallet" && <p className="text-sm text-slate-600 py-3 text-center">Bayar via OVO / GoPay ke <b>0812-3456-7890</b></p>}
-          <Button data-testid="btn-confirm-payment" onClick={pay} disabled={busy} className="w-full bg-amber-600 hover:bg-amber-700 text-white">
-            {busy ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Memproses…</> : "Konfirmasi Pembayaran"}
-          </Button>
-          <p className="text-[11px] text-slate-400 text-center">*Ini simulasi pembayaran (mockup). Tidak ada transaksi nyata.</p>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

@@ -4,6 +4,8 @@ import io
 import html
 import json
 import hmac
+import base64
+import hashlib
 import uuid
 import secrets
 import logging
@@ -13,6 +15,7 @@ from typing import Optional, List
 from urllib.parse import quote
 
 from openpyxl import load_workbook, Workbook
+import httpx
 
 from fastapi import (
     FastAPI, APIRouter, Depends, HTTPException, Request, Response,
@@ -392,6 +395,126 @@ async def logout(request: Request, response: Response):
         await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/")
     return {"ok": True}
+
+
+# ---------- Midtrans payment ----------
+MIDTRANS_SERVER_KEY = os.environ.get("MIDTRANS_SERVER_KEY", "")
+MIDTRANS_CLIENT_KEY = os.environ.get("MIDTRANS_CLIENT_KEY", "")
+MIDTRANS_IS_PRODUCTION = os.environ.get("MIDTRANS_IS_PRODUCTION", "false").lower() == "true"
+MIDTRANS_SNAP_URL = ("https://app.midtrans.com" if MIDTRANS_IS_PRODUCTION else "https://app.sandbox.midtrans.com") + "/snap/v1/transactions"
+MIDTRANS_STATUS_URL = ("https://api.midtrans.com" if MIDTRANS_IS_PRODUCTION else "https://api.sandbox.midtrans.com") + "/v2"
+PREMIUM_PLANS = {
+    "monthly": {"days": 30, "amount": 149000, "label": "Premium Bulanan"},
+    "yearly": {"days": 365, "amount": 1290000, "label": "Premium Tahunan"},
+}
+
+
+class CheckoutIn(BaseModel):
+    plan: str
+
+
+@api.post("/subscription/checkout")
+async def create_checkout(body: CheckoutIn, user: dict = Depends(get_current_user)):
+    plan = PREMIUM_PLANS.get(body.plan)
+    if not plan:
+        raise HTTPException(status_code=400, detail="Paket tidak valid")
+    if not MIDTRANS_SERVER_KEY:
+        raise HTTPException(status_code=500, detail="Pembayaran belum dikonfigurasi")
+    order_id = f"PF-{user['user_id'][:12]}-{uuid.uuid4().hex[:10]}"
+    amount = plan["amount"]
+    await db.orders.insert_one({
+        "order_id": order_id, "user_id": user["user_id"], "plan": body.plan,
+        "plan_days": plan["days"], "gross_amount": amount, "status": "pending",
+        "premium_until": None, "created_at": now_iso(), "last_notification": None,
+    })
+    payload = {
+        "transaction_details": {"order_id": order_id, "gross_amount": amount},
+        "enabled_payments": ["other_qris", "gopay", "bank_transfer"],
+        "item_details": [{"id": body.plan, "price": amount, "quantity": 1, "name": plan["label"]}],
+        "customer_details": {"first_name": user.get("name") or "Pengguna", "email": user.get("email")},
+        "expiry": {"unit": "day", "duration": 1},
+    }
+    auth = base64.b64encode(f"{MIDTRANS_SERVER_KEY}:".encode()).decode()
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post(MIDTRANS_SNAP_URL, json=payload, headers={
+                "Accept": "application/json", "Content-Type": "application/json",
+                "Authorization": f"Basic {auth}",
+            })
+    except Exception:
+        await db.orders.update_one({"order_id": order_id}, {"$set": {"status": "create_failed"}})
+        raise HTTPException(status_code=502, detail="Gagal menghubungi Midtrans")
+    if r.status_code >= 400:
+        await db.orders.update_one({"order_id": order_id}, {"$set": {"status": "create_failed"}})
+        logger.error("Midtrans snap error %s: %s", r.status_code, r.text)
+        raise HTTPException(status_code=502, detail="Gagal membuat transaksi pembayaran")
+    data = r.json()
+    await db.orders.update_one({"order_id": order_id}, {"$set": {"snap_token": data["token"], "redirect_url": data.get("redirect_url")}})
+    return {"order_id": order_id, "token": data["token"], "redirect_url": data.get("redirect_url"), "client_key": MIDTRANS_CLIENT_KEY, "production": MIDTRANS_IS_PRODUCTION}
+
+
+async def _midtrans_status(order_id: str) -> dict:
+    auth = base64.b64encode(f"{MIDTRANS_SERVER_KEY}:".encode()).decode()
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(f"{MIDTRANS_STATUS_URL}/{order_id}/status", headers={"Authorization": f"Basic {auth}", "Accept": "application/json"})
+    return r.json() if r.status_code < 400 else {}
+
+
+async def _activate_premium(order: dict) -> str:
+    now = datetime.now(timezone.utc)
+    user = await db.users.find_one({"user_id": order["user_id"]}, {"_id": 0})
+    base = now
+    if user and user.get("subscriptionExpiry"):
+        try:
+            cur = datetime.fromisoformat(user["subscriptionExpiry"])
+            if cur.tzinfo is None:
+                cur = cur.replace(tzinfo=timezone.utc)
+            if cur > now:
+                base = cur
+        except Exception:
+            pass
+    new_expiry = (base + timedelta(days=order["plan_days"])).isoformat()
+    await db.users.update_one({"user_id": order["user_id"]}, {"$set": {"subscriptionTier": "premium", "subscriptionExpiry": new_expiry}})
+    return new_expiry
+
+
+@api.post("/midtrans/notification")
+async def midtrans_notification(request: Request):
+    body = await request.json()
+    order_id = str(body.get("order_id", ""))
+    status_code = str(body.get("status_code", ""))
+    gross = str(body.get("gross_amount", ""))
+    signature = str(body.get("signature_key", ""))
+    expected = hashlib.sha512((order_id + status_code + gross + MIDTRANS_SERVER_KEY).encode()).hexdigest()
+    if not order_id or not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=401, detail="invalid signature")
+    order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="unknown order")
+    if gross != f'{order["gross_amount"]:.2f}':
+        raise HTTPException(status_code=400, detail="amount mismatch")
+    verified = await _midtrans_status(order_id)
+    tstatus = str(verified.get("transaction_status", "")).lower()
+    fraud = str(verified.get("fraud_status", "")).lower()
+    paid = str(verified.get("status_code")) == "200" and tstatus in {"settlement", "capture"} and fraud in {"accept", ""}
+    if paid:
+        res = await db.orders.update_one({"order_id": order_id, "status": {"$ne": "paid"}}, {"$set": {"status": "paid", "paid_at": now_iso(), "last_notification": body}})
+        if res.modified_count:
+            expiry = await _activate_premium(order)
+            await db.orders.update_one({"order_id": order_id}, {"$set": {"premium_until": expiry}})
+    elif tstatus in {"deny", "cancel", "expire"}:
+        await db.orders.update_one({"order_id": order_id, "status": {"$ne": "paid"}}, {"$set": {"status": tstatus, "last_notification": body}})
+    else:
+        await db.orders.update_one({"order_id": order_id}, {"$set": {"status": tstatus or "pending", "last_notification": body}})
+    return {"ok": True}
+
+
+@api.get("/subscription/order/{order_id}")
+async def get_order(order_id: str, user: dict = Depends(get_current_user)):
+    order = await db.orders.find_one({"order_id": order_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order tidak ditemukan")
+    return {"order_id": order_id, "status": order["status"], "plan": order.get("plan"), "premium_until": order.get("premium_until")}
 
 
 # ---------- Subscription (mockup) ----------
@@ -1406,6 +1529,11 @@ async def startup():
         logger.info("Storage initialized")
     except Exception as e:
         logger.error(f"Storage init failed: {e}")
+    try:
+        await db.orders.create_index("order_id", unique=True)
+        await db.orders.create_index("user_id")
+    except Exception as e:
+        logger.error(f"Order index init failed: {e}")
 
 
 @app.on_event("shutdown")
