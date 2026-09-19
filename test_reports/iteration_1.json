@@ -1,0 +1,30 @@
+{
+  "summary": "Comprehensive backend + frontend testing of ProFinance Interior SaaS. 20/20 backend pytest cases pass (auth email+bearer+cookie, seed-demo idempotency, dashboard aggregation matching per-project summaries, exact finance formulas incl. sisaTagihan only counting Downpayment/Termin/Pelunasan, worker kasbon/pelunasan tx categories, premium gating 403 -> upgrade unlocks, workitems/progress-summary S-curve with planned+actual, report structure with tukang grouping, report/pdf via ?auth= token returns valid application/pdf starting with %PDF). Frontend: login (Bahasa Indonesia), dashboard KPI cards & health-badge project cards, project detail 4 tabs, cash flow add-transaction, tukang add + kasbon/pelunasan buttons, premium user sees S-curve chart + Export PDF, free user (fresh register) sees paywall banners on Progress & Report tabs, /pricing upgrade modal with QRIS/Bank/E-wallet + confirm payment successfully upgrades to premium.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py: report/pdf route calls `await require_premium(user)` — works because require_premium accepts a user dict, but it's using the dependency function outside FastAPI DI which is fragile. Consider a plain helper `ensure_premium(user)` for clarity.",
+    "_user_from_request_or_query duplicates the auth resolution logic already in get_current_user — extract a shared token resolver to avoid drift (cookie vs bearer vs query).",
+    "server.py compute_summary is invoked N+1 times in GET /projects and /dashboard (one Mongo find per project). For users with many projects this is O(N) round-trips; batch aggregate via $group would scale better.",
+    "server.py: `set_session_cookie` sends the cookie but frontend cross-site (preview subdomain) also stores pf_token in localStorage — good redundancy; keep documented.",
+    "auth cookie SameSite/Secure attributes should be verified for production; not tested here.",
+    "compute_worker returns worker dict merged with computed fields but relies on unique tukang names within a project — if two tukang share the same name their kasbon/pelunasan totals collide. Recommend enforcing unique name per project or using worker_id in the transaction category."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": { "backend": "100% (20/20)", "frontend": "100% for tested flows" },
+  "test_credentials": "furnitrue.mail@gmail.com / Password123 (premium, seeded). Free tests use ephemeral registered accounts.",
+  "seed_data_creation": "Backend tests register a fresh user each run and call /api/seed-demo; frontend free-flow test also registers ephemeral user and seeds demo. Premium seeded account is used as-is.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest MUST run serially: use `python -m pytest backend/tests/backend_test.py -n 0 --junitxml=...`. The pytest.ini enforces `-n 2 --dist loadscope`, which splits classes to different workers and breaks the session-scoped `fresh_user` fixture (each worker registers its own user). Passing `-n 0` overrides addopts and all 20 tests pass. The `menu-toggle-tier` dropdown item lives inside a Radix portal that only renders after clicking `user-menu-trigger`; if a toast is showing over the header, the click can be swallowed — prefer registering a fresh free user via API to test paywall (as done here).",
+  "rca of the issue": "N/A — no failing functionality. Only note: pytest-xdist with session-scoped fixtures + class-based test grouping produces duplicate sessions across workers; unrelated to app code."
+}

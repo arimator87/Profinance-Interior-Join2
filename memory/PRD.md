@@ -1,0 +1,47 @@
+# ProFinance Interior — PRD
+
+## Original Problem Statement
+Cloud-First Multi-Tenant SaaS (Freemium) untuk kontraktor interior & arsitektur di Indonesia. Catatan keuangan + manajemen proyek. FREE: proyek, cash flow, kasbon/pelunasan tukang. PREMIUM: Progress Pekerjaan (item + S-Curve) & Export Laporan PDF. Bahasa Indonesia, Rupiah.
+
+## User Choices
+- Auth: Google (Emergent-managed) + Email/Password (JWT-style session token)
+- Payment: MOCKUP only (no real gateway)
+- File storage: Emergent Object Storage
+- Language: Bahasa Indonesia · Currency: Rupiah
+
+## Architecture
+- Backend: FastAPI (server.py, auth.py, storage.py, pdf_report.py) + MongoDB (motor). All routes /api-prefixed.
+- Frontend: React 19 + React Router 7, Tailwind + shadcn/ui, Recharts, framer-motion. Fonts: Outfit / Plus Jakarta Sans / JetBrains Mono.
+- Auth: session tokens in `user_sessions`; accepted via httpOnly cookie or Bearer. Frontend keeps `pf_token` in localStorage + cookie.
+- Object storage for receipt & progress photos. PDF via reportlab (embeds photos).
+
+## Data Models (Mongo collections)
+users, user_sessions, projects, transactions, workers, work_items, progress_entries, files.
+
+## Business Logic (implemented & verified exact)
+- totalIn/totalOut/balance; marginPct=(balance/nominal)*100 (0 if nominal 0); realisasiPct=(totalIn/nominal)*100
+- sisaTagihan = nominal - terbayar; terbayar counts only 'in' with category Downpayment/Termin/Pelunasan
+- Worker sisaHutang = borongan - Kasbon - Pelunasan (from 'out' tx category 'Kasbon Tukang {Nama}' / 'Pelunasan Tukang {Nama}')
+- Health color coding: >=20 #16a34a, 10-19 #2563eb, 0-9 #d97706, -10..-1 #ea580c, <-10 #dc2626
+- Work item weight=(nilai/nominal)*100; total progress = Σ(weight*lastProgress/100)/ΣweightΣ*100
+
+## Implemented (2026-06)
+- Email + Google auth, session management, /auth/me
+- Dashboard aggregation (saldo bersih, sisa tagihan, budget, kasbon aktif) + project cards + filters
+- Project CRUD; Project Detail 4 tabs (Cash Flow, Tukang, Progress[premium], Report[premium])
+- Cash Flow transactions with receipt photo upload; categories (income/expense + Kustom)
+- Tukang management + Bayar Kasbon / Pelunasan (auto-creates categorized out transaction)
+- Premium gating (403) + Paywall banners; header demo tier toggle
+- Progress work items + daily progress logs + photo docs + S-Curve (planned vs actual)
+- Report: Pie (expense by category), horizontal Bar (kontrak/pengeluaran/margin), Export PDF (reportlab, embeds photos)
+- Pricing page + mockup payment modal (QRIS/Bank/E-wallet) -> upgrade premium
+- Demo seed endpoint (3 Indonesian interior projects)
+
+## Status
+Verified by testing agent: backend 20/20, frontend all tested flows pass. Payment is MOCKED.
+
+## Backlog / Next (P1/P2)
+- P1: Batch summary via Mongo $group (avoid N+1) for many projects
+- P1: Unique tukang name per project (or use worker_id in tx category) to avoid name collisions
+- P2: Edit project/transaction; export CSV; multi-currency; team members per tenant
+- P2: Real payment gateway (Stripe/Midtrans) replacing mockup

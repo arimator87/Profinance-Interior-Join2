@@ -79,6 +79,7 @@ async def register_email_user(email: str, name: str, password: str) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
+    doc.pop("_id", None)
     return doc
 
 
@@ -113,6 +114,7 @@ async def process_google_session(session_id: str) -> tuple[dict, str]:
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.users.insert_one(user)
+        user.pop("_id", None)
     else:
         await db.users.update_one(
             {"user_id": user["user_id"]},
