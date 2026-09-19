@@ -36,6 +36,9 @@ users, user_sessions, projects, transactions, workers, work_items, progress_entr
 - Report: Pie (expense by category), horizontal Bar (kontrak/pengeluaran/margin), Export PDF (reportlab, embeds photos)
 - Pricing page + mockup payment modal (QRIS/Bank/E-wallet) -> upgrade premium
 - Demo seed endpoint (3 Indonesian interior projects)
+- Impor RAB Excel (2026-06-19, premium): `GET /api/rab-template` unduh template .xlsx (kolom: Item Pekerjaan / Sub Item / Harga), `POST /api/projects/{id}/workitems/import` parse openpyxl → auto-buat work_items & sub_items (item tanpa sub = nilai manual). Tombol "Unduh Template" & "Impor Excel" di RAB card tab Progress.
+- Open Graph share (2026-06-19): `GET /api/public/portal/{slug}/share` serve HTML dgn meta OG (title=nama proyek, image=thumbnail, desc) + redirect RELATIF ke `/portal/{slug}` (aman thd proxy host-rewrite; og:url pakai x-forwarded-host). Dialog share & tombol WhatsApp memakai URL share ini agar preview kartu muncul di WhatsApp/Twitter.
+- Reset Link Portal (2026-06-19): `POST /api/projects/{id}/portal-link/reset` buat slug baru → link lama otomatis 404. Tombol konfirmasi di dialog Portal Klien.
 - Portal Klien publik (2026-06-19): link berbasis nama proyek (portalSlug = slug-nama + token hex), route publik `/portal/:slug`, tombol "Portal Klien" di tab Progress dengan salin link + share ke WhatsApp (wa.me). Portal menampilkan progress %, Kurva-S, rincian pekerjaan (TANPA rupiah), riwayat pembayaran + terbayar/sisa tagihan, dan galeri foto dokumentasi. Foto disajikan via endpoint publik ber-scope (`/api/public/portal/{slug}/file`) yang hanya melayani path foto milik proyek tsb. Link otomatis mati saat proyek dihapus.
 
 ## Status

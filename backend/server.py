@@ -1,5 +1,8 @@
 import os
 import re
+import io
+import html
+import json
 import uuid
 import secrets
 import logging
@@ -7,6 +10,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, List
 from urllib.parse import quote
+
+from openpyxl import load_workbook, Workbook
 
 from fastapi import (
     FastAPI, APIRouter, Depends, HTTPException, Request, Response,
@@ -781,6 +786,86 @@ async def reset_portal_link(project_id: str, user: dict = Depends(get_current_us
     return {"slug": slug}
 
 
+# ---------- RAB Excel import ----------
+def _to_int(v):
+    if v is None:
+        return 0
+    if isinstance(v, (int, float)):
+        return int(v)
+    s = re.sub(r"[^0-9]", "", str(v))
+    return int(s) if s else 0
+
+
+@api.get("/rab-template")
+async def rab_template(user: dict = Depends(get_current_user)):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "RAB"
+    ws.append(["Item Pekerjaan", "Sub Item", "Harga (Rp)"])
+    ws.append(["Pekerjaan Plafon Gypsum", "Rangka Hollow 4x4", 12000000])
+    ws.append(["", "Gypsum board 9mm", 8000000])
+    ws.append(["", "Finishing compound & cat", 5000000])
+    ws.append(["Pekerjaan Lantai", "Keramik granit 60x60", 25000000])
+    ws.append(["", "Pemasangan & nat", 6000000])
+    ws.append(["Pekerjaan Pengecatan (tanpa rincian)", "", 15000000])
+    for i, w in enumerate((34, 30, 16)):
+        ws.column_dimensions[chr(65 + i)].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.read()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="Template-RAB.xlsx"'},
+    )
+
+
+@api.post("/projects/{project_id}/workitems/import")
+async def import_rab(project_id: str, file: UploadFile = File(...), user: dict = Depends(require_premium)):
+    await get_owned_project(project_id, user)
+    raw = await file.read()
+    try:
+        wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="File Excel tidak valid (.xlsx)")
+    ws = wb.active
+    created_items = 0
+    created_subs = 0
+    current_id = None
+    for idx, row in enumerate(ws.iter_rows(values_only=True)):
+        if idx == 0 or not row:
+            continue
+        item_name = str(row[0]).strip() if len(row) > 0 and row[0] not in (None, "") else ""
+        sub_name = str(row[1]).strip() if len(row) > 1 and row[1] not in (None, "") else ""
+        harga = _to_int(row[2]) if len(row) > 2 else 0
+        if not item_name and not sub_name:
+            continue
+        if item_name:
+            current_id = str(uuid.uuid4())
+            await db.work_items.insert_one({
+                "id": current_id, "project_id": project_id, "name": item_name,
+                "nilai": 0 if sub_name else harga, "createdAt": now_iso(),
+            })
+            created_items += 1
+        if sub_name:
+            if not current_id:
+                current_id = str(uuid.uuid4())
+                await db.work_items.insert_one({
+                    "id": current_id, "project_id": project_id, "name": "Item Pekerjaan",
+                    "nilai": 0, "createdAt": now_iso(),
+                })
+                created_items += 1
+            await db.sub_items.insert_one({
+                "id": str(uuid.uuid4()), "work_item_id": current_id, "project_id": project_id,
+                "name": sub_name, "harga": harga, "status": False, "createdAt": now_iso(),
+            })
+            created_subs += 1
+    wb.close()
+    if created_items == 0 and created_subs == 0:
+        raise HTTPException(status_code=400, detail="Tidak ada data valid ditemukan. Gunakan template RAB.")
+    return {"items": created_items, "subs": created_subs}
+
+
 # ---------- Public Client Portal (no auth) ----------
 @api.get("/public/portal/{slug}")
 async def public_portal(slug: str):
@@ -867,6 +952,40 @@ async def public_portal_file(slug: str, path: str = Query(...)):
     data, content_type = get_object(path)
     record = await db.files.find_one({"storage_path": path}, {"_id": 0})
     return Response(content=data, media_type=(record or {}).get("content_type", content_type))
+
+
+@api.get("/public/portal/{slug}/share")
+async def portal_share(slug: str, request: Request):
+    p = await db.projects.find_one({"portalSlug": slug}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Portal tidak ditemukan")
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.hostname
+    target_rel = f"/portal/{slug}"
+    og_url = f"https://{host}{target_rel}"
+    name = html.escape(p.get("name", "Proyek") or "Proyek")
+    company = (p.get("companyName") or "").strip()
+    company_txt = f" · {company}" if company and company != "-" else ""
+    desc = html.escape(f"Pantau progress pekerjaan, kurva-S, dan foto dokumentasi secara realtime{company_txt}.")
+    img = html.escape(p.get("thumbnail") or "")
+    title = html.escape(f"{p.get('name', 'Proyek')} — Portal Progress Klien")
+    img_tags = f'<meta property="og:image" content="{img}"><meta name="twitter:image" content="{img}">' if img else ""
+    doc = f"""<!doctype html><html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ProFinance Interior">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="{desc}">
+<meta property="og:url" content="{html.escape(og_url)}">
+{img_tags}
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title}">
+<meta name="twitter:description" content="{desc}">
+<meta http-equiv="refresh" content="0; url={target_rel}">
+<script>window.location.replace({json.dumps(target_rel)});</script>
+</head><body style="font-family:sans-serif;background:#0f172a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+Mengalihkan ke portal progress…</body></html>"""
+    return Response(content=doc, media_type="text/html")
 
 
 # ---------- Report (Premium) ----------

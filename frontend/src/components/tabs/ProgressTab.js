@@ -18,6 +18,7 @@ import {
 import {
   Plus, Loader2, Trash2, ListChecks, Camera, TrendingUp, ChevronDown, Pencil, PackagePlus,
   CalendarRange, Wallet, Save, FileDown, Share2, Copy, Check, MessageCircle, X, RotateCcw,
+  FileSpreadsheet, Download,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -32,6 +33,29 @@ export function ProgressTab({ project }) {
   const [expanded, setExpanded] = useState({});
 
   const [rabInput, setRabInput] = useState("");
+  const [importing, setImporting] = useState(false);
+  const rabFileRef = useRef();
+
+  const importRab = async (e) => {
+    const file = e.target.files?.[0];
+    if (rabFileRef.current) rabFileRef.current.value = "";
+    if (!file) return;
+    setImporting(true);
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const res = await api.post(`/projects/${project.id}/workitems/import`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      toast.success(`Impor selesai: ${res.data.items} item · ${res.data.subs} sub item`);
+      await load();
+    } catch (err) { toast.error(err?.response?.data?.detail || "Gagal impor Excel"); } finally { setImporting(false); }
+  };
+  const downloadTemplate = async () => {
+    try {
+      const res = await api.get("/rab-template", { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = "Template-RAB.xlsx";
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch { toast.error("Gagal unduh template"); }
+  };
 
   const [itemOpen, setItemOpen] = useState(false);
   const [itemForm, setItemForm] = useState({ id: null, name: "", nilai: "", startDate: "", endDate: "" });
@@ -48,7 +72,7 @@ export function ProgressTab({ project }) {
     setSharing(true);
     try {
       const res = await api.get(`/projects/${project.id}/portal-link`);
-      setPortalUrl(`${window.location.origin}/portal/${res.data.slug}`);
+      setPortalUrl(`${window.location.origin}/api/public/portal/${res.data.slug}/share`);
       setCopied(false);
       setShareOpen(true);
     } catch { toast.error("Gagal membuat link portal"); } finally { setSharing(false); }
@@ -65,7 +89,7 @@ export function ProgressTab({ project }) {
     setSharing(true);
     try {
       const res = await api.post(`/projects/${project.id}/portal-link/reset`);
-      setPortalUrl(`${window.location.origin}/portal/${res.data.slug}`);
+      setPortalUrl(`${window.location.origin}/api/public/portal/${res.data.slug}/share`);
       setCopied(false);
       toast.success("Link lama diputus. Link baru dibuat.");
     } catch { toast.error("Gagal reset link"); } finally { setSharing(false); }
@@ -230,6 +254,14 @@ export function ProgressTab({ project }) {
           </div>
         </div>
         {rabMismatch && <p className="text-[11px] text-amber-700 mt-2">⚠ Total item ({rupiahShort(data.totalItemValue)}) belum sama dengan RAB ({rupiahShort(data.rabTotal)}). Bobot total tidak akan mencapai 100%.</p>}
+        <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-slate-100">
+          <span className="text-xs text-slate-500 mr-auto">Isi item & sub item otomatis dari file Excel:</span>
+          <input ref={rabFileRef} type="file" accept=".xlsx" hidden onChange={importRab} />
+          <Button data-testid="btn-rab-template" size="sm" variant="ghost" onClick={downloadTemplate} className="h-8 gap-1.5 text-xs text-slate-600"><Download className="w-3.5 h-3.5" /> Unduh Template</Button>
+          <Button data-testid="btn-import-rab" size="sm" variant="outline" onClick={() => rabFileRef.current?.click()} disabled={importing} className="h-8 gap-1.5 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50">
+            {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5" />} Impor Excel
+          </Button>
+        </div>
       </Card>
 
       {/* KPIs */}
