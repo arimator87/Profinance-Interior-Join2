@@ -5,6 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Header } from "@/components/Header";
 import { HealthBadge } from "@/components/HealthBadge";
 import { Paywall } from "@/components/Paywall";
+import { AddProjectDialog } from "@/components/AddProjectDialog";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -17,7 +18,7 @@ import { ProgressTab } from "@/components/tabs/ProgressTab";
 import { ReportTab } from "@/components/tabs/ReportTab";
 import {
   ArrowLeft, Loader2, Wallet, TrendingUp, Receipt, Building2, Trash2, Lock,
-  Wallet2, ListChecks, FileBarChart, Crown, MapPin, Calendar,
+  Wallet2, ListChecks, FileBarChart, Crown, MapPin, Calendar, Pencil, Briefcase,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -41,6 +42,7 @@ export default function ProjectDetail() {
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("cashflow");
+  const [editOpen, setEditOpen] = useState(false);
 
   const loadProject = useCallback(async () => {
     try {
@@ -105,17 +107,21 @@ export default function ProjectDetail() {
                 <h1 className="font-display text-xl sm:text-2xl font-extrabold text-white tracking-tight truncate">{project.name}</h1>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-white/80 text-xs mt-1">
                   <span className="flex items-center gap-1"><Building2 className="w-3 h-3" /> {project.owner || "-"}</span>
+                  {project.companyName && project.companyName !== "-" && <span className="flex items-center gap-1"><Briefcase className="w-3 h-3" /> {project.companyName}</span>}
                   {project.alamatProyek && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {project.alamatProyek}</span>}
                   <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {fmtDate(project.targetSelesai)}</span>
                 </div>
               </div>
-              <AlertDialog>
-                <AlertDialogTrigger asChild><button data-testid="btn-delete-project" className="shrink-0 w-9 h-9 rounded-lg bg-white/20 backdrop-blur hover:bg-red-500 flex items-center justify-center text-white transition-colors"><Trash2 className="w-4 h-4" /></button></AlertDialogTrigger>
-                <AlertDialogContent className="bg-white">
-                  <AlertDialogHeader><AlertDialogTitle>Hapus proyek "{project.name}"?</AlertDialogTitle><AlertDialogDescription>Semua transaksi, tukang, dan progress akan dihapus permanen.</AlertDialogDescription></AlertDialogHeader>
-                  <AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={deleteProject} className="bg-red-600 hover:bg-red-700">Hapus</AlertDialogAction></AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+              <div className="flex gap-2 shrink-0">
+                <button data-testid="btn-edit-project" onClick={() => setEditOpen(true)} className="w-9 h-9 rounded-lg bg-white/20 backdrop-blur hover:bg-amber-500 flex items-center justify-center text-white transition-colors"><Pencil className="w-4 h-4" /></button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild><button data-testid="btn-delete-project" className="w-9 h-9 rounded-lg bg-white/20 backdrop-blur hover:bg-red-500 flex items-center justify-center text-white transition-colors"><Trash2 className="w-4 h-4" /></button></AlertDialogTrigger>
+                  <AlertDialogContent className="bg-white">
+                    <AlertDialogHeader><AlertDialogTitle>Hapus proyek "{project.name}"?</AlertDialogTitle><AlertDialogDescription>Semua transaksi, tukang, dan progress akan dihapus permanen.</AlertDialogDescription></AlertDialogHeader>
+                    <AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={deleteProject} className="bg-red-600 hover:bg-red-700">Hapus</AlertDialogAction></AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
             </div>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
@@ -154,6 +160,8 @@ export default function ProjectDetail() {
           </TabsContent>
         </Tabs>
       </main>
+
+      <AddProjectDialog open={editOpen} onOpenChange={setEditOpen} project={project} onCreated={(p) => setProject(p)} />
     </div>
   );
 }

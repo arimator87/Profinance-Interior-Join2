@@ -359,6 +359,20 @@ async def list_transactions(project_id: str, user: dict = Depends(get_current_us
     return [{k: v for k, v in t.items() if k != "project_id"} for t in txs]
 
 
+@api.put("/transactions/{tx_id}")
+async def update_transaction(tx_id: str, body: TransactionIn, user: dict = Depends(get_current_user)):
+    tx = await db.transactions.find_one({"id": tx_id}, {"_id": 0})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    await get_owned_project(tx["project_id"], user)
+    update = body.model_dump()
+    if not update.get("date"):
+        update["date"] = tx["date"]
+    await db.transactions.update_one({"id": tx_id}, {"$set": update})
+    doc = await db.transactions.find_one({"id": tx_id}, {"_id": 0})
+    return {k: v for k, v in doc.items() if k != "project_id"}
+
+
 @api.delete("/transactions/{tx_id}")
 async def delete_transaction(tx_id: str, user: dict = Depends(get_current_user)):
     tx = await db.transactions.find_one({"id": tx_id}, {"_id": 0})

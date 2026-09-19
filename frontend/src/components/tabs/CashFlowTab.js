@@ -11,7 +11,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, ArrowDownLeft, ArrowUpRight, Loader2, Trash2, ImageIcon, Upload, ReceiptText } from "lucide-react";
+import { Plus, ArrowDownLeft, ArrowUpRight, Loader2, Trash2, ImageIcon, Upload, ReceiptText, Pencil } from "lucide-react";
 import { rupiah, fmtDate, INCOME_CATEGORIES, EXPENSE_CATEGORIES } from "@/lib/format";
 import { toast } from "sonner";
 
@@ -23,6 +23,7 @@ export function CashFlowTab({ project, transactions, onChange }) {
   const [receiptPath, setReceiptPath] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const fileRef = useRef();
 
   const cats = type === "in" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
@@ -33,9 +34,26 @@ export function CashFlowTab({ project, transactions, onChange }) {
   };
 
   const openFor = (t) => {
+    setEditingId(null);
     setType(t);
     setForm({ amount: "", category: t === "in" ? "Downpayment" : "Material", description: "", date: "" });
     setCustomCat(""); setReceiptPath(null);
+    setOpen(true);
+  };
+
+  const openEdit = (tx) => {
+    setEditingId(tx.id);
+    setType(tx.type);
+    const list = tx.type === "in" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+    const known = list.includes(tx.category);
+    setForm({
+      amount: String(tx.amount),
+      category: known ? tx.category : "Kustom",
+      description: tx.description || "",
+      date: tx.date ? tx.date.slice(0, 10) : "",
+    });
+    setCustomCat(known ? "" : tx.category);
+    setReceiptPath(tx.receiptUrl || null);
     setOpen(true);
   };
 
@@ -61,14 +79,20 @@ export function CashFlowTab({ project, transactions, onChange }) {
     const category = form.category === "Kustom" ? (customCat || "Lainnya") : form.category;
     setBusy(true);
     try {
-      await api.post(`/projects/${project.id}/transactions`, {
+      const payload = {
         type, amount: parseInt(form.amount, 10), category,
         description: form.description,
         date: form.date ? new Date(form.date).toISOString() : null,
         receiptUrl: receiptPath,
-      });
-      toast.success("Transaksi ditambahkan");
-      setOpen(false); resetForm(); onChange();
+      };
+      if (editingId) {
+        await api.put(`/transactions/${editingId}`, payload);
+        toast.success("Transaksi diperbarui");
+      } else {
+        await api.post(`/projects/${project.id}/transactions`, payload);
+        toast.success("Transaksi ditambahkan");
+      }
+      setOpen(false); setEditingId(null); resetForm(); onChange();
     } catch {
       toast.error("Gagal menyimpan transaksi");
     } finally {
@@ -124,6 +148,7 @@ export function CashFlowTab({ project, transactions, onChange }) {
                   {t.type === "in" ? "+" : "-"}{rupiah(t.amount)}
                 </div>
               </div>
+              <button data-testid={`edit-transaction-${t.id}`} onClick={() => openEdit(t)} className="text-slate-300 hover:text-amber-600 shrink-0"><Pencil className="w-4 h-4" /></button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <button data-testid={`delete-transaction-${t.id}`} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-4 h-4" /></button>
@@ -141,7 +166,7 @@ export function CashFlowTab({ project, transactions, onChange }) {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="bg-white max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-display text-xl">Tambah Transaksi {type === "in" ? "Masuk" : "Keluar"}</DialogTitle>
+            <DialogTitle className="font-display text-xl">{editingId ? "Edit" : "Tambah"} Transaksi {type === "in" ? "Masuk" : "Keluar"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3.5">
             <div>
