@@ -1,0 +1,8 @@
+crons:
+  - name: reset-demo-data
+    description: "Refresh the read-only demo account data daily so visitors always see clean sample projects"
+    cron: "0 20 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/reset-demo"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

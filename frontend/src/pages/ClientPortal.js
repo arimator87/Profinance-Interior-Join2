@@ -236,7 +236,7 @@ export default function ClientPortal() {
                         data-testid={`portal-photo-${i}-${j}`}
                         className="mb-2.5 block w-full break-inside-avoid group relative overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
                       >
-                        <img src={`${BACKEND_URL}${ph}`} alt="" loading="lazy" className="w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                        <img src={g.photos[j].startsWith("http") ? g.photos[j] : `${BACKEND_URL}${g.photos[j]}`} alt="" loading="lazy" className="w-full object-cover transition-transform duration-500 group-hover:scale-105" />
                         <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/25 transition-colors flex items-center justify-center">
                           <Maximize2 className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
                         </div>
@@ -262,7 +262,7 @@ export default function ClientPortal() {
           {lightbox.photos.length > 1 && (
             <button data-testid="lightbox-prev" className="absolute left-2 sm:left-6 text-white/60 hover:text-white transition-colors p-2" onClick={(e) => { e.stopPropagation(); setLightbox((l) => ({ ...l, index: (l.index - 1 + l.photos.length) % l.photos.length })); }}><ChevronLeft className="w-8 h-8" /></button>
           )}
-          <img src={`${BACKEND_URL}${lightbox.photos[lightbox.index]}`} alt="" className="max-h-[85vh] max-w-[88vw] object-contain rounded-lg shadow-2xl" onClick={(e) => e.stopPropagation()} />
+          <img src={lightbox.photos[lightbox.index].startsWith("http") ? lightbox.photos[lightbox.index] : `${BACKEND_URL}${lightbox.photos[lightbox.index]}`} alt="" className="max-h-[85vh] max-w-[88vw] object-contain rounded-lg shadow-2xl" onClick={(e) => e.stopPropagation()} />
           {lightbox.photos.length > 1 && (
             <button data-testid="lightbox-next" className="absolute right-2 sm:right-6 text-white/60 hover:text-white transition-colors p-2" onClick={(e) => { e.stopPropagation(); setLightbox((l) => ({ ...l, index: (l.index + 1) % l.photos.length })); }}><ChevronRight className="w-8 h-8" /></button>
           )}

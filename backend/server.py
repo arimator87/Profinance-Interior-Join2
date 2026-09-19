@@ -3,6 +3,7 @@ import re
 import io
 import html
 import json
+import hmac
 import uuid
 import secrets
 import logging
@@ -15,7 +16,7 @@ from openpyxl import load_workbook, Workbook
 
 from fastapi import (
     FastAPI, APIRouter, Depends, HTTPException, Request, Response,
-    UploadFile, File, Header, Query,
+    UploadFile, File, Header, Query, BackgroundTasks,
 )
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
@@ -46,6 +47,18 @@ EXPENSE_CATEGORIES = ["Material", "Makan", "Toll", "Bensin", "Lainnya"]
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+DEMO_PHOTOS = [
+    "https://images.unsplash.com/photo-1736182615481-3795ea557614?crop=entropy&cs=srgb&fm=jpg&q=85&w=1080",
+    "https://images.unsplash.com/photo-1618832515490-e181c4794a45?crop=entropy&cs=srgb&fm=jpg&q=85&w=1080",
+    "https://images.unsplash.com/photo-1692890659047-079b769ee3e6?crop=entropy&cs=srgb&fm=jpg&q=85&w=1080",
+    "https://images.unsplash.com/photo-1543525324-26e03b510586?crop=entropy&cs=srgb&fm=jpg&q=85&w=1080",
+    "https://images.pexels.com/photos/5691533/pexels-photo-5691533.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "https://images.pexels.com/photos/36035073/pexels-photo-36035073.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "https://images.pexels.com/photos/15124970/pexels-photo-15124970.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "https://images.unsplash.com/photo-1772442198620-3674b427e59e?crop=entropy&cs=srgb&fm=jpg&q=85&w=1080",
+]
 
 
 def slugify(name: str) -> str:
@@ -307,23 +320,62 @@ async def demo_login(response: Response):
     )
     count = await db.projects.count_documents({"user_id": user["user_id"]})
     if count == 0:
-        await seed_demo({"user_id": user["user_id"]})
-        proj = await db.projects.find_one({"user_id": user["user_id"]}, {"_id": 0}, sort=[("createdAt", 1)])
-        if proj:
-            wis = await db.work_items.find({"project_id": proj["id"]}, {"_id": 0}).sort("createdAt", 1).to_list(50)
-            if wis:
-                baseline = {
-                    "savedAt": (datetime.now(timezone.utc) - timedelta(days=20)).isoformat(),
-                    "rabTotal": 0,
-                    "totalItemValue": sum(w.get("nilai", 0) for w in wis),
-                    "items": [{"id": w["id"], "name": w["name"], "value": w.get("nilai", 0)} for w in wis],
-                }
-                await db.work_items.update_one({"id": wis[0]["id"]}, {"$set": {"nilai": wis[0].get("nilai", 0) + 20000000}})
-                await db.projects.update_one({"id": proj["id"]}, {"$set": {"rabBaseline": baseline}})
+        await _provision_demo_data(user["user_id"])
     token = await create_session(user["user_id"])
     set_session_cookie(response, token)
     user = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
     return {"user": user_public(user), "token": token}
+
+
+async def _provision_demo_data(user_id: str):
+    """Seed sample projects + a baseline showcase for the demo account (idempotent)."""
+    if await db.projects.count_documents({"user_id": user_id}) > 0:
+        return
+    await seed_demo({"user_id": user_id})
+    proj = await db.projects.find_one({"user_id": user_id}, {"_id": 0}, sort=[("createdAt", 1)])
+    if not proj:
+        return
+    wis = await db.work_items.find({"project_id": proj["id"]}, {"_id": 0}).sort("createdAt", 1).to_list(50)
+    if wis:
+        baseline = {
+            "savedAt": (datetime.now(timezone.utc) - timedelta(days=20)).isoformat(),
+            "rabTotal": 0,
+            "totalItemValue": sum(w.get("nilai", 0) for w in wis),
+            "items": [{"id": w["id"], "name": w["name"], "value": w.get("nilai", 0)} for w in wis],
+        }
+        await db.work_items.update_one({"id": wis[0]["id"]}, {"$set": {"nilai": wis[0].get("nilai", 0) + 20000000}})
+        await db.projects.update_one({"id": proj["id"]}, {"$set": {"rabBaseline": baseline}})
+
+
+async def _reset_demo_job():
+    user = await db.users.find_one({"email": "demo@profinance.id"}, {"_id": 0})
+    if not user:
+        return
+    uid = user["user_id"]
+    projects = await db.projects.find({"user_id": uid}, {"_id": 0, "id": 1}).to_list(1000)
+    pids = [p["id"] for p in projects]
+    witems = await db.work_items.find({"project_id": {"$in": pids}}, {"_id": 0, "id": 1}).to_list(3000)
+    wiids = [w["id"] for w in witems]
+    await db.progress_entries.delete_many({"workItemId": {"$in": wiids}})
+    await db.sub_items.delete_many({"project_id": {"$in": pids}})
+    await db.work_items.delete_many({"project_id": {"$in": pids}})
+    await db.transactions.delete_many({"project_id": {"$in": pids}})
+    await db.workers.delete_many({"project_id": {"$in": pids}})
+    await db.projects.delete_many({"user_id": uid})
+    await _provision_demo_data(uid)
+    logger.info("Demo data reset & re-seeded for %s", uid)
+
+
+@api.post("/cron/reset-demo")
+async def cron_reset_demo(request: Request, background: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET")
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    if not secret or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background.add_task(_reset_demo_job)
+    return {"ok": True, "queued": True}
 
 
 @api.get("/auth/me")
@@ -989,7 +1041,7 @@ async def public_portal(slug: str):
     ).sort("date", -1).to_list(3000)
     gallery = []
     for e in entries:
-        urls = [f"/api/public/portal/{slug}/file?path={quote(u)}" for u in (e.get("photoUrls") or [])]
+        urls = [u if u.startswith("http") else f"/api/public/portal/{slug}/file?path={quote(u)}" for u in (e.get("photoUrls") or [])]
         if not urls:
             continue
         label = name_map.get(e["workItemId"], "")
@@ -1295,6 +1347,7 @@ async def seed_demo(user: dict = Depends(get_current_user)):
     ]
 
     created = 0
+    photo_i = 0
     for spec in specs:
         pid = str(uuid.uuid4())
         await db.projects.insert_one({
@@ -1324,9 +1377,11 @@ async def seed_demo(user: dict = Depends(get_current_user)):
             iid = str(uuid.uuid4())
             await db.work_items.insert_one({"id": iid, "project_id": pid, "name": iname, "nilai": nilai, "createdAt": d(spec["start"])})
             for days, prog in entries:
+                pics = [DEMO_PHOTOS[photo_i % len(DEMO_PHOTOS)], DEMO_PHOTOS[(photo_i + 1) % len(DEMO_PHOTOS)]]
+                photo_i += 2
                 await db.progress_entries.insert_one({
                     "id": str(uuid.uuid4()), "workItemId": iid, "date": d(days), "progress": prog,
-                    "notes": f"Update lapangan progres {prog}%", "photoUrls": [], "createdAt": d(days),
+                    "notes": f"Update lapangan progres {prog}%", "photoUrls": pics, "createdAt": d(days),
                 })
         created += 1
 
