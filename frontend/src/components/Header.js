@@ -5,11 +5,11 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, RefreshCw } from "lucide-react";
+import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, RefreshCw, PlayCircle } from "lucide-react";
 import { toast } from "sonner";
 
 export function Header() {
-  const { user, logout, isPremium, refreshUser } = useAuth();
+  const { user, logout, isPremium, isDemo, refreshUser } = useAuth();
   const navigate = useNavigate();
 
   const initials = (user?.name || user?.email || "U")
@@ -28,6 +28,13 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur-xl">
+      {isDemo && (
+        <div data-testid="demo-banner" className="bg-blue-600 text-white text-xs sm:text-sm px-4 py-2 text-center">
+          <span className="font-semibold">Mode Demo (baca-saja)</span> — Anda menjelajah dengan data contoh.{" "}
+          <button data-testid="demo-register-btn" onClick={async () => { await logout(); navigate("/login"); }} className="underline font-semibold hover:text-blue-100">Daftar gratis</button>{" "}
+          untuk mengelola proyek Anda.
+        </div>
+      )}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
         <button
           data-testid="header-logo"
@@ -47,11 +54,11 @@ export function Header() {
           <span
             data-testid="tier-badge"
             className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
-              isPremium ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"
+              isDemo ? "bg-blue-100 text-blue-700" : isPremium ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"
             }`}
           >
-            {isPremium ? <Crown className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
-            {isPremium ? "Premium" : "Free"}
+            {isDemo ? <PlayCircle className="w-3.5 h-3.5" /> : isPremium ? <Crown className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {isDemo ? "Mode Demo" : isPremium ? "Premium" : "Free"}
           </span>
 
           {!isPremium && (
@@ -86,9 +93,11 @@ export function Header() {
               <DropdownMenuItem data-testid="menu-pricing" onClick={() => navigate("/pricing")}>
                 <Crown className="w-4 h-4 mr-2" /> Paket & Upgrade
               </DropdownMenuItem>
-              <DropdownMenuItem data-testid="menu-toggle-tier" onClick={toggleTier}>
-                <RefreshCw className="w-4 h-4 mr-2" /> Toggle Free/Premium (demo)
-              </DropdownMenuItem>
+              {!isDemo && (
+                <DropdownMenuItem data-testid="menu-toggle-tier" onClick={toggleTier}>
+                  <RefreshCw className="w-4 h-4 mr-2" /> Toggle Free/Premium (demo)
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem data-testid="menu-logout" onClick={async () => { await logout(); navigate("/login"); }} className="text-red-600 focus:text-red-600">
                 <LogOut className="w-4 h-4 mr-2" /> Keluar

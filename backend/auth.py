@@ -38,6 +38,7 @@ def user_public(doc: dict) -> dict:
         "subscriptionTier": doc.get("subscriptionTier", "free"),
         "subscriptionExpiry": doc.get("subscriptionExpiry"),
         "authProvider": doc.get("authProvider", "email"),
+        "isDemo": bool(doc.get("isDemo", False)),
     }
 
 
@@ -158,6 +159,11 @@ async def get_current_user(request: Request) -> dict:
     user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User tidak ditemukan")
+    if user.get("isDemo") and request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        raise HTTPException(
+            status_code=403,
+            detail="Mode Demo: data tidak dapat diubah. Daftar akun gratis untuk mulai mengelola proyek Anda.",
+        )
     return user
 
 

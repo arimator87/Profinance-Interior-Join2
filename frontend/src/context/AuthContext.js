@@ -39,6 +39,12 @@ export function AuthProvider({ children }) {
     return res.data.user;
   };
 
+  const loginDemo = async () => {
+    const res = await api.post("/auth/demo");
+    applyAuth(res.data);
+    return res.data.user;
+  };
+
   const register = async (email, name, password) => {
     const res = await api.post("/auth/register", { email, name, password });
     applyAuth(res.data);
@@ -60,9 +66,10 @@ export function AuthProvider({ children }) {
   const setUserData = (u) => setUser(u);
 
   const isPremium = user?.subscriptionTier === "premium";
+  const isDemo = !!user?.isDemo;
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser, setUserData, isPremium, checkAuth }}>
+    <AuthContext.Provider value={{ user, loading, login, loginDemo, register, logout, refreshUser, setUserData, isPremium, isDemo, checkAuth }}>
       {children}
     </AuthContext.Provider>
   );

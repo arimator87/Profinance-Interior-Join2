@@ -1,4 +1,5 @@
 import axios from "axios";
+import { toast } from "sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -15,6 +16,17 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+api.interceptors.response.use(
+  (r) => r,
+  (error) => {
+    const detail = error?.response?.data?.detail;
+    if (error?.response?.status === 403 && typeof detail === "string" && detail.startsWith("Mode Demo")) {
+      toast.info(detail);
+    }
+    return Promise.reject(error);
+  }
+);
 
 export function fileUrl(path) {
   if (!path) return null;

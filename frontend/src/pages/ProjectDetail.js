@@ -149,13 +149,27 @@ export default function ProjectDetail() {
           <TabsContent value="progress" className="mt-5">
             {isPremium ? <ProgressTab project={project} /> : (
               <Paywall testid="paywall-banner-progress" title="Progress Pekerjaan (Premium)"
-                features={["Tracking item pekerjaan berbobot", "Log progress harian 0-100%", "Upload foto dokumentasi", "Grafik Kurva-S otomatis"]} />
+                features={[
+                  "Item & sub-item pekerjaan berbobot (cost-loaded)",
+                  "Catat & EDIT progress harian 0-100%",
+                  "Impor RAB langsung dari Excel (.xlsx)",
+                  "Kurva-S: Rencana vs Realisasi + Time Schedule",
+                  "Baseline vs Revisi RAB (lacak deviasi negosiasi)",
+                  "Portal Klien realtime + share ke WhatsApp",
+                  "Upload foto dokumentasi (maks 10/entri)",
+                ]} />
             )}
           </TabsContent>
           <TabsContent value="report" className="mt-5">
             {isPremium ? <ReportTab project={project} /> : (
               <Paywall testid="paywall-banner-report" title="Laporan & Export PDF (Premium)"
-                features={["Pie chart breakdown pengeluaran", "Bar chart margin proyek", "Ringkasan analitik lengkap", "Export laporan PDF profesional"]} />
+                features={[
+                  "Dashboard analitik: pie & bar chart pengeluaran",
+                  "Laporan Internal PDF profesional",
+                  "Laporan Progress PDF + grafik Kurva-S",
+                  "Tabel Deviasi RAB (Baseline vs Revisi) di PDF",
+                  "Dokumentasi foto lapangan di laporan",
+                ]} />
             )}
           </TabsContent>
         </Tabs>

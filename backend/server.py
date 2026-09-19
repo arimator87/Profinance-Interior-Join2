@@ -286,6 +286,46 @@ async def google_session(body: GoogleSessionIn, response: Response):
     return {"user": user_public(user), "token": token}
 
 
+@api.post("/auth/demo")
+async def demo_login(response: Response):
+    demo_email = "demo@profinance.id"
+    long_expiry = (datetime.now(timezone.utc) + timedelta(days=3650)).isoformat()
+    user = await db.users.find_one({"email": demo_email}, {"_id": 0})
+    if not user:
+        user = {
+            "user_id": f"user_demo_{uuid.uuid4().hex[:8]}",
+            "email": demo_email, "name": "Akun Demo", "password_hash": None, "picture": None,
+            "subscriptionTier": "premium", "subscriptionExpiry": long_expiry,
+            "stripeCustomerId": None, "authProvider": "demo", "isDemo": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.users.insert_one(user)
+        user.pop("_id", None)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"subscriptionTier": "premium", "subscriptionExpiry": long_expiry, "isDemo": True}},
+    )
+    count = await db.projects.count_documents({"user_id": user["user_id"]})
+    if count == 0:
+        await seed_demo({"user_id": user["user_id"]})
+        proj = await db.projects.find_one({"user_id": user["user_id"]}, {"_id": 0}, sort=[("createdAt", 1)])
+        if proj:
+            wis = await db.work_items.find({"project_id": proj["id"]}, {"_id": 0}).sort("createdAt", 1).to_list(50)
+            if wis:
+                baseline = {
+                    "savedAt": (datetime.now(timezone.utc) - timedelta(days=20)).isoformat(),
+                    "rabTotal": 0,
+                    "totalItemValue": sum(w.get("nilai", 0) for w in wis),
+                    "items": [{"id": w["id"], "name": w["name"], "value": w.get("nilai", 0)} for w in wis],
+                }
+                await db.work_items.update_one({"id": wis[0]["id"]}, {"$set": {"nilai": wis[0].get("nilai", 0) + 20000000}})
+                await db.projects.update_one({"id": proj["id"]}, {"$set": {"rabBaseline": baseline}})
+    token = await create_session(user["user_id"])
+    set_session_cookie(response, token)
+    user = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    return {"user": user_public(user), "token": token}
+
+
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     return user_public(user)

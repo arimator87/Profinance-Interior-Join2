@@ -4,17 +4,18 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Ruler, Loader2, Check, Sparkles } from "lucide-react";
+import { Ruler, Loader2, Check, Sparkles, PlayCircle } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Login() {
-  const { login, register, user } = useAuth();
+  const { login, loginDemo, register, user } = useAuth();
   const navigate = useNavigate();
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [demoBusy, setDemoBusy] = useState(false);
 
   useEffect(() => {
     if (user) navigate("/dashboard", { replace: true });
@@ -24,6 +25,19 @@ export default function Login() {
     // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
     const redirectUrl = window.location.origin + "/dashboard";
     window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+  };
+
+  const tryDemo = async () => {
+    setDemoBusy(true);
+    try {
+      await loginDemo();
+      toast.success("Masuk sebagai Akun Demo");
+      navigate("/dashboard", { replace: true });
+    } catch {
+      toast.error("Gagal masuk mode demo");
+    } finally {
+      setDemoBusy(false);
+    }
   };
 
   const submit = async (e) => {
@@ -160,6 +174,50 @@ export default function Login() {
               {mode === "login" ? "Daftar" : "Masuk"}
             </button>
           </p>
+
+          <div className="flex items-center gap-3 my-5">
+            <div className="h-px flex-1 bg-slate-200" />
+            <span className="text-xs text-slate-400">atau coba dulu</span>
+            <div className="h-px flex-1 bg-slate-200" />
+          </div>
+          <Button
+            data-testid="login-demo-button"
+            onClick={tryDemo}
+            disabled={demoBusy}
+            variant="outline"
+            className="w-full h-11 gap-2 border-slate-900 text-slate-900 hover:bg-slate-900 hover:text-white transition-colors"
+          >
+            {demoBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
+            Jelajahi Akun Demo
+          </Button>
+          <p className="text-[11px] text-slate-400 mt-2 text-center">
+            Rasakan semua fitur Premium dengan data contoh — <b>mode baca-saja</b>, tanpa perlu daftar.
+          </p>
+
+          {/* Feature info for tablet & mobile (desktop has the showcase panel) */}
+          <div className="lg:hidden mt-8 rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-50 px-3 py-1 mb-4">
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+              <span className="text-[11px] font-semibold tracking-[0.15em] text-amber-700">FITUR TERBARU</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2.5">
+              {[
+                "Portal Klien realtime + WhatsApp",
+                "Impor RAB langsung dari Excel",
+                "Baseline vs Revisi RAB",
+                "Kurva-S cost-loaded & Time Schedule",
+                "Kasbon & Pelunasan Tukang",
+                "Laporan PDF profesional",
+              ].map((f, i) => (
+                <div key={i} className="flex items-center gap-2.5 text-sm text-slate-600">
+                  <span className="w-5 h-5 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                    <Check className="w-3 h-3 text-amber-600" />
+                  </span>
+                  <span>{f}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
