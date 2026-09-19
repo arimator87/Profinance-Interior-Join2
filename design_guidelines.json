@@ -1,0 +1,230 @@
+{
+  "app_identity": {
+    "name": "ProFinance Interior",
+    "tagline": "Aplikasi Catatan Keuangan & Manajemen Proyek Kontraktor Interior & Arsitektur",
+    "archetype": "Architectural Precision & Warm Wood Craftsmanship",
+    "target_audience": "Kontraktor Interior, Arsitek Studio, Pemborong Bangunan, Project Manager Interior di Indonesia",
+    "language": "Bahasa Indonesia",
+    "currency_format": "Rupiah (Rp) e.g. Rp 250.000.000"
+  },
+  "design_system": {
+    "theme_mode": "Dual theme support with warm editorial slate default (Light theme default for architectural trust, with high contrast dark mode toggle)",
+    "typography": {
+      "heading_font": "Outfit, sans-serif (Architectural geometric precision, clean weight scaling)",
+      "body_font": "Plus Jakarta Sans, sans-serif (Indonesian SaaS standard, clean legibility at high density)",
+      "mono_font": "JetBrains Mono, monospace (Numeric currency accuracy, transaction tables, S-Curve coordinates)",
+      "hierarchy": {
+        "h1": "text-3xl sm:text-4xl font-extrabold tracking-tight",
+        "h2": "text-xl sm:text-2xl font-bold tracking-tight",
+        "h3": "text-lg font-semibold",
+        "subheading": "text-sm font-medium text-slate-5-00 dark:text-slate-400",
+        "kpi_value": "font-mono font-bold tracking-tight text-2xl sm:text-3xl",
+        "table_cell": "text-sm text-slate-700 dark:text-slate-200 font-sans"
+      }
+    },
+    "colors": {
+      "slate_base": {
+        "bg_light": "#F8FAFC",
+        "surface_light": "#FFFFFF",
+        "border_light": "#E2E8F0",
+        "text_main_light": "#0F172A",
+        "bg_dark": "#0B0F17",
+        "surface_dark": "#131B2E",
+        "border_dark": "#1E293B",
+        "text_main_dark": "#F8FAFC"
+      },
+      "brand_primary": {
+        "main": "#D97706",
+        "hover": "#B45309",
+        "subtle": "#FEF3C7",
+        "accent": "#F59E0B",
+        "description": "Warm Wood Teak & Amber Brass - symbolizes high-end carpentry, timber & architectural craftsmanship"
+      },
+      "brand_secondary": {
+        "blueprint_blue": "#1E3A8A",
+        "blueprint_accent": "#3B82F6",
+        "stone_gray": "#64748B"
+      },
+      "financial_health_status": {
+        "great_margin": {
+          "range": ">= 20%",
+          "color": "#16a34a",
+          "label": "Sangat Sehat",
+          "bg_light": "#DCFCE7",
+          "text": "#15803D"
+        },
+        "good_margin": {
+          "range": "10% - 19%",
+          "color": "#2563eb",
+          "label": "Sehat",
+          "bg_light": "#DBEAFE",
+          "text": "#1D4ED8"
+        },
+        "warning_margin": {
+          "range": "0% - 9%",
+          "color": "#d97706",
+          "label": "Waspada",
+          "bg_light": "#FEF3C7",
+          "text": "#B45309"
+        },
+        "danger_margin": {
+          "range": "-10% to -1%",
+          "color": "#ea580c",
+          "label": "Defisit Ringan",
+          "bg_light": "#FFEDD5",
+          "text": "#C2410C"
+        },
+        "critical_margin": {
+          "range": "< -10%",
+          "color": "#dc2626",
+          "label": "Kritis",
+          "bg_light": "#FEE2E2",
+          "text": "#B91C1C"
+        }
+      }
+    },
+    "layout_strategy": {
+      "dashboard_grid": "bento_high_density",
+      "spacing": "Generous interior padding (p-4 to p-8) with clear nested radii (rounded-xl for cards, rounded-lg for subcomponents)",
+      "card_style": "1px crisp border (border-slate-200 dark:border-slate-800) with subtle ambient drop shadow (shadow-sm hover:shadow-md transition-shadow)",
+      "navigation": "Top Header with Sticky Blur + Quick Tenant Switcher (Free / Premium Tier Badge) + Navigation Tabs/Pills"
+    }
+  },
+  "key_features_and_pages": [
+    {
+      "page": "Authentication (Login / Register)",
+      "path": "/login",
+      "design_notes": "Dual method: 'Masuk dengan Google' prominent CTA button + Email/Password form. Includes a visual preview showcase of interior project financial metrics on the left side (or top in mobile)."
+    },
+    {
+      "page": "Dashboard Utama (Client Dashboard)",
+      "path": "/dashboard",
+      "key_elements": [
+        "KPI Aggregated Cards: Total Saldo Bersih, Total Budget Proyek, Total Sisa Tagihan (Accounts Receivable), Total Kasbon Tukang Aktif",
+        "Multi-Tenant / Freemium Status Banner: Displays Plan status (Free vs Premium) with quick upgrade button",
+        "Project Cards Grid: Filterable by Status (Semua, Berjalan, Selesai, Pending) with Financial Health Indicator badge (#16a34a, #2563eb, #d97706, #ea580c, #dc2626)",
+        "Modal Tambah Proyek Baru (Nama Proyek, Klien, Nilai Kontrak Rp, Tenggat Waktu, Kategori Interior: Residensial, Komersial, Kantor)"
+      ]
+    },
+    {
+      "page": "Detail Proyek (Project Detail Hub)",
+      "path": "/project/:id",
+      "tabs": [
+        {
+          "tab_id": "cashflow",
+          "name": "Cash Flow",
+          "description": "Tabel Transaksi Masuk (Pemasukan/Termyn Klien) & Keluar (Bahan, Tukang, Operasional). Modal Tambah Transaksi dengan opsi Upload Foto Struk/Nota Bukti Transfer."
+        },
+        {
+          "tab_id": "tukang",
+          "name": "Kasbon & Tukang",
+          "description": "Daftar Pekerja/Tukang, Tarif Harian/Borongan, Akumulasi Kasbon, dan Status Pelunasan Upah (Lunas / Ada Tunggakan). Quick Action 'Bayar Kasbon' & 'Pelunasan Upah'."
+        },
+        {
+          "tab_id": "progress",
+          "name": "Progress Pekerjaan",
+          "is_premium": true,
+          "description": "Tracking item pekerjaan (e.g. Pekerjaan Plafon, Finishing HPL, Installasi Listrik) + Grafis Kurva-S (S-Curve Chart: Rencana vs Realisasi %). Memiliki Paywall Overlay untuk pengguna Free Tier dengan preview blurred backdrop & CTA Upgrade Premium."
+        },
+        {
+          "tab_id": "report",
+          "name": "Laporan & Analytics",
+          "is_premium": true,
+          "description": "Visualisasi Pie Chart (Breakdown Pengeluaran per Kategori) + Horizontal Bar Chart (Margin Perbandingan Pemasukan vs Pengeluaran). Tombol Export Laporan PDF (Clean Printable Layout). Memiliki Paywall Overlay untuk pengguna Free Tier."
+        }
+      ]
+    },
+    {
+      "page": "Pricing & Upgrade Page",
+      "path": "/pricing",
+      "key_elements": [
+        "Perbandingan Paket Free vs Premium Pro (Rp 149.000 / bulan atau Rp 1.290.000 / tahun)",
+        "Mockup Payment Modal: Simulasi pembayaran via QRIS, Transfer Bank BCA/Mandiri, atau E-Wallet (OVO/Gopay) untuk instan unlock fitur Premium SaaS."
+      ]
+    }
+  ],
+  "charts_and_visualizations": {
+    "library": "Recharts",
+    "scurve": {
+      "component": "ComposedChart / LineChart",
+      "lines": [
+        {"key": "target_progress", "color": "#2563eb", "name": "Target Rencana (%)", "strokeDasharray": "4 4"},
+        {"key": "actual_progress", "color": "#D97706", "name": "Realisasi Lapangan (%)", "strokeWidth": 3}
+      ]
+    },
+    "expense_pie": {
+      "component": "PieChart",
+      "categories": ["Material & Kayu HPL", "Upah & Kasbon Tukang", "Transportasi & Operasional", "Hardware & Aksesoris", "Subkontraktor Speciality"]
+    },
+    "margin_bar": {
+      "component": "BarChart (Horizontal layout)",
+      "bars": ["Nilai Kontrak", "Total Pengeluaran", "Laba / Margin Bersih"]
+    }
+  },
+  "image_urls": {
+    "projects": [
+      {
+        "url": "https://images.unsplash.com/photo-1633110187937-6e3b2f36dfca?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBsdXh1cnklMjBpbnRlcmlvciUyMGFyY2hpdGVjdHVyZSUyMGxpdmluZyUyMHJvb20lMjBraXRjaGVuJTIwb2ZmaWNlfGVufDB8fHx8MTc8OTgwMjMxN3ww&ixlib=rb-4.1.0&q=85",
+        "description": "Renovasi Interior Apartment Minimalist Modern - Jakarta Selatan",
+        "category": "Project Thumbnail"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1737233489790-590602d7e4f5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwyfHxtb2Rlcm4lMjBsdXh1cnklMjBpbnRlcmlvciUyMGFyY2hpdGVjdHVyZSUyMGxpdmluZyUyMHJvb20lMjBraXRjaGVuJTIwb2ZmaWNlfGVufDB8fHx8MTc4OTgwMjMxN3ww&ixlib=rb-4.1.0&q=85",
+        "description": "Custom Kitchen Set HPL & Backdrop TV Studio - BSD City",
+        "category": "Project Thumbnail"
+      },
+      {
+        "url": "https://images.pexels.com/photos/8089172/pexels-photo-8089172.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Interior Kantor Open-Space & Meeting Room - Kemang",
+        "category": "Project Thumbnail"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1768321917661-d4f1a89d2185?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2MzR8MHwxfHNlYXJjaHwzfHxpbnRlcmlvciUyMGRlc2lnbiUyMGFyY2hpdGVjdHVyZSUyMGNvbnN0cnVjdGlvbiUyMHNpdGUlMjBmaW5pc2glMjByb29tfGVufDB8fHx8MTc4OTgwMjMxMHww&ixlib=rb-4.1.0&q=85",
+        "description": "Pekerjaan Frame Partisi Aluminium & Plafon - Cafe Senopati",
+        "category": "Project Construction Site"
+      }
+    ],
+    "receipt_examples": [
+      {
+        "url": "https://images.pexels.com/photos/5691696/pexels-photo-5691696.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Bukti Pembelian Material Pintu & Fitting Hardware",
+        "category": "Receipt Upload Preview"
+      }
+    ]
+  },
+  "testing_and_qa_guidelines": {
+    "data_testid_rules": "All interactive elements, inputs, modals, buttons, financial metrics, and tab triggers MUST contain descriptive kebab-case data-testid attributes.",
+    "critical_test_ids": [
+      "data-testid='login-email-input'",
+      "data-testid='login-password-input'",
+      "data-testid='login-submit-button'",
+      "data-testid='login-google-button'",
+      "data-testid='dashboard-kpi-saldo-bersih'",
+      "data-testid='dashboard-kpi-sisa-tagihan'",
+      "data-testid='btn-add-project'",
+      "data-testid='project-card-{id}'",
+      "data-testid='project-margin-badge'",
+      "data-testid='tab-cashflow'",
+      "data-testid='tab-tukang'",
+      "data-testid='tab-progress'",
+      "data-testid='tab-report'",
+      "data-testid='btn-add-transaction'",
+      "data-testid='btn-add-tukang'",
+      "data-testid='paywall-banner-progress'",
+      "data-testid='paywall-banner-report'",
+      "data-testid='btn-upgrade-premium'",
+      "data-testid='btn-export-pdf'"
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Build a complete, responsive, highly interactive single-page application (SPA) with React Router, Framer Motion, and Lucide React icons.",
+    "Implement state persistence using localStorage so user data (projects, cash flow transactions, workers/tukang, user tier status: Free vs Premium) persists during browser refresh.",
+    "Provide seed mock data representing real Indonesian interior contractor projects (e.g., 'Kitchen Set & Wall Panel Villa Canggu', 'Fitout Office Tower SCBD', 'Renovasi Rumah Cluster Bintaro') with initial transaction records, tukang data, and progress percentages.",
+    "Ensure strict adherence to the mandated financial health indicator color coding hex values: >=20% (#16a34a), 10-19% (#2563eb), 0-9% (#d97706), -10 to -1% (#ea580c), <-10% (#dc2626).",
+    "Format all money values in Indonesian Rupiah (e.g. Rp 145.000.000) with proper dot digit separation.",
+    "For the Progress and Report tabs in Project Detail, if the user is currently on the Free Tier, render a high-end Paywall Banner overlay with a blurred background preview, listing Premium features and a direct 'Upgrade ke Premium' CTA button that opens the Pricing / Mockup Payment dialog.",
+    "Provide a header toggle to instantly switch between Free and Premium account modes for easy testing and demonstration of paywall unlocking.",
+    "Ensure PDF export generates a clean, printable summary (or print dialog view) with company header, project details, cash flow summary, and charts.",
+    "Do NOT use transparent backgrounds on dropdowns or header elements; always use proper solid or backdrop-blur backgrounds."
+  ]
+}
