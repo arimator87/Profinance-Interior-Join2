@@ -10,27 +10,37 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, HardHat, Loader2, Trash2, Wallet, HandCoins, CheckCircle2 } from "lucide-react";
+import { Plus, HardHat, Loader2, Trash2, Wallet, HandCoins, CheckCircle2, Pencil } from "lucide-react";
 import { rupiah } from "@/lib/format";
 import { toast } from "sonner";
 
 export function TukangTab({ project, workers, onChange }) {
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ name: "", borongan: "" });
+  const [editWorkerId, setEditWorkerId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [payWorker, setPayWorker] = useState(null);
   const [payType, setPayType] = useState("kasbon");
   const [payAmount, setPayAmount] = useState("");
 
-  const addWorker = async () => {
+  const openAdd = () => { setEditWorkerId(null); setForm({ name: "", borongan: "" }); setAddOpen(true); };
+  const openEdit = (w) => { setEditWorkerId(w.id); setForm({ name: w.name, borongan: String(w.borongan || "") }); setAddOpen(true); };
+
+  const saveWorker = async () => {
     if (!form.name) return toast.error("Nama tukang wajib diisi");
     setBusy(true);
     try {
-      await api.post(`/projects/${project.id}/workers`, { name: form.name, borongan: parseInt(form.borongan || 0, 10) });
-      toast.success("Tukang ditambahkan");
-      setAddOpen(false); setForm({ name: "", borongan: "" }); onChange();
-    } catch { toast.error("Gagal menambah tukang"); } finally { setBusy(false); }
+      const payload = { name: form.name, borongan: parseInt(form.borongan || 0, 10) };
+      if (editWorkerId) {
+        await api.put(`/workers/${editWorkerId}`, payload);
+        toast.success("Data tukang diperbarui");
+      } else {
+        await api.post(`/projects/${project.id}/workers`, payload);
+        toast.success("Tukang ditambahkan");
+      }
+      setAddOpen(false); setEditWorkerId(null); setForm({ name: "", borongan: "" }); onChange();
+    } catch { toast.error("Gagal menyimpan data tukang"); } finally { setBusy(false); }
   };
 
   const openPay = (w, type) => { setPayWorker(w); setPayType(type); setPayAmount(""); setPayOpen(true); };
@@ -54,7 +64,7 @@ export function TukangTab({ project, workers, onChange }) {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-display font-bold text-lg text-slate-900">Kasbon & Tukang</h3>
-        <Button data-testid="btn-add-tukang" size="sm" onClick={() => setAddOpen(true)} className="bg-amber-600 hover:bg-amber-700 text-white gap-1.5">
+        <Button data-testid="btn-add-tukang" size="sm" onClick={openAdd} className="bg-amber-600 hover:bg-amber-700 text-white gap-1.5">
           <Plus className="w-4 h-4" /> Tukang
         </Button>
       </div>
@@ -79,13 +89,16 @@ export function TukangTab({ project, workers, onChange }) {
                       <div className="text-xs text-slate-500">Borongan {rupiah(w.borongan)}</div>
                     </div>
                   </div>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild><button data-testid={`delete-worker-${w.id}`} className="text-slate-300 hover:text-red-500"><Trash2 className="w-4 h-4" /></button></AlertDialogTrigger>
-                    <AlertDialogContent className="bg-white">
-                      <AlertDialogHeader><AlertDialogTitle>Hapus tukang?</AlertDialogTitle><AlertDialogDescription>Data tukang akan dihapus (transaksi kasbon tetap tersimpan di cash flow).</AlertDialogDescription></AlertDialogHeader>
-                      <AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={() => remove(w.id)} className="bg-red-600 hover:bg-red-700">Hapus</AlertDialogAction></AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button data-testid={`edit-worker-${w.id}`} onClick={() => openEdit(w)} className="text-slate-300 hover:text-amber-600"><Pencil className="w-4 h-4" /></button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild><button data-testid={`delete-worker-${w.id}`} className="text-slate-300 hover:text-red-500"><Trash2 className="w-4 h-4" /></button></AlertDialogTrigger>
+                      <AlertDialogContent className="bg-white">
+                        <AlertDialogHeader><AlertDialogTitle>Hapus tukang?</AlertDialogTitle><AlertDialogDescription>Data tukang akan dihapus (transaksi kasbon tetap tersimpan di cash flow).</AlertDialogDescription></AlertDialogHeader>
+                        <AlertDialogFooter><AlertDialogCancel>Batal</AlertDialogCancel><AlertDialogAction onClick={() => remove(w.id)} className="bg-red-600 hover:bg-red-700">Hapus</AlertDialogAction></AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
                 </div>
 
                 <div className="mt-3.5 grid grid-cols-3 gap-2 text-center">
@@ -109,14 +122,14 @@ export function TukangTab({ project, workers, onChange }) {
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="bg-white max-w-sm">
-          <DialogHeader><DialogTitle className="font-display text-xl">Tambah Tukang</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-display text-xl">{editWorkerId ? "Edit Data Tukang" : "Tambah Tukang"}</DialogTitle></DialogHeader>
           <div className="space-y-3.5">
             <div><Label>Nama Tukang</Label><Input data-testid="worker-name-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Pak Slamet" className="mt-1" /></div>
             <div><Label>Nilai Borongan (Rp)</Label><Input data-testid="worker-borongan-input" type="number" value={form.borongan} onChange={(e) => setForm({ ...form, borongan: e.target.value })} placeholder="45000000" className="mt-1 font-mono" /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Batal</Button>
-            <Button data-testid="worker-submit-button" onClick={addWorker} disabled={busy} className="bg-amber-600 hover:bg-amber-700 text-white">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Simpan"}</Button>
+            <Button data-testid="worker-submit-button" onClick={saveWorker} disabled={busy} className="bg-amber-600 hover:bg-amber-700 text-white">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : (editWorkerId ? "Simpan Perubahan" : "Simpan")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

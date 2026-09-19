@@ -400,6 +400,25 @@ async def list_workers(project_id: str, user: dict = Depends(get_current_user)):
     return [await compute_worker(w) for w in workers]
 
 
+@api.put("/workers/{worker_id}")
+async def update_worker(worker_id: str, body: WorkerIn, user: dict = Depends(get_current_user)):
+    worker = await db.workers.find_one({"id": worker_id}, {"_id": 0})
+    if not worker:
+        raise HTTPException(status_code=404, detail="Tukang tidak ditemukan")
+    await get_owned_project(worker["project_id"], user)
+    old_name = worker["name"]
+    new_name = body.name
+    await db.workers.update_one({"id": worker_id}, {"$set": {"name": new_name, "borongan": body.borongan}})
+    if new_name != old_name:
+        for prefix in ("Kasbon Tukang", "Pelunasan Tukang"):
+            await db.transactions.update_many(
+                {"project_id": worker["project_id"], "category": f"{prefix} {old_name}"},
+                {"$set": {"category": f"{prefix} {new_name}"}},
+            )
+    worker = await db.workers.find_one({"id": worker_id}, {"_id": 0})
+    return await compute_worker(worker)
+
+
 @api.post("/workers/{worker_id}/pay")
 async def pay_worker(worker_id: str, body: WorkerPayIn, user: dict = Depends(get_current_user)):
     worker = await db.workers.find_one({"id": worker_id}, {"_id": 0})
