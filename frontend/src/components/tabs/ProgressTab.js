@@ -17,7 +17,7 @@ import {
 } from "recharts";
 import {
   Plus, Loader2, Trash2, ListChecks, Camera, TrendingUp, ChevronDown, Pencil, PackagePlus,
-  CalendarRange, Wallet, Save, FileDown, Share2, Copy, Check, MessageCircle, X,
+  CalendarRange, Wallet, Save, FileDown, Share2, Copy, Check, MessageCircle, X, RotateCcw,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -60,6 +60,15 @@ export function ProgressTab({ project }) {
   const shareWhatsApp = () => {
     const msg = `Halo, berikut link untuk memantau progress pekerjaan proyek *${project.name}* secara realtime:\n\n${portalUrl}\n\nTerima kasih.`;
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+  const resetLink = async () => {
+    setSharing(true);
+    try {
+      const res = await api.post(`/projects/${project.id}/portal-link/reset`);
+      setPortalUrl(`${window.location.origin}/portal/${res.data.slug}`);
+      setCopied(false);
+      toast.success("Link lama diputus. Link baru dibuat.");
+    } catch { toast.error("Gagal reset link"); } finally { setSharing(false); }
   };
 
   const exportProgressPdf = async () => {
@@ -464,6 +473,25 @@ export function ProgressTab({ project }) {
             <Button data-testid="portal-whatsapp-btn" onClick={shareWhatsApp} className="w-full gap-2 bg-green-600 hover:bg-green-700 text-white">
               <MessageCircle className="w-4 h-4" /> Bagikan ke WhatsApp
             </Button>
+            <div className="pt-2 border-t border-slate-100">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <button data-testid="portal-reset-btn" disabled={sharing} className="text-xs text-red-500 hover:text-red-600 flex items-center gap-1.5 disabled:opacity-50">
+                    <RotateCcw className="w-3.5 h-3.5" /> Putuskan link lama & buat link baru
+                  </button>
+                </AlertDialogTrigger>
+                <AlertDialogContent className="bg-white">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Reset link portal?</AlertDialogTitle>
+                    <AlertDialogDescription>Link yang sudah dibagikan sebelumnya akan langsung tidak berfungsi dan klien tidak bisa mengaksesnya lagi. Sebuah link baru akan dibuat untuk dibagikan ulang.</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Batal</AlertDialogCancel>
+                    <AlertDialogAction data-testid="portal-reset-confirm" onClick={resetLink} className="bg-red-600 hover:bg-red-700">Ya, Putuskan Link</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

@@ -773,6 +773,14 @@ async def portal_link(project_id: str, user: dict = Depends(get_current_user)):
     return {"slug": slug}
 
 
+@api.post("/projects/{project_id}/portal-link/reset")
+async def reset_portal_link(project_id: str, user: dict = Depends(get_current_user)):
+    p = await get_owned_project(project_id, user)
+    slug = f"{slugify(p.get('name'))}-{secrets.token_hex(3)}"
+    await db.projects.update_one({"id": project_id}, {"$set": {"portalSlug": slug}})
+    return {"slug": slug}
+
+
 # ---------- Public Client Portal (no auth) ----------
 @api.get("/public/portal/{slug}")
 async def public_portal(slug: str):
