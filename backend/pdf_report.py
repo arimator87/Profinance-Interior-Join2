@@ -567,6 +567,57 @@ def build_progress_pdf(project, summary, prog, transactions, entries_by_key):
         story.append(Spacer(1, 8))
         story.append(gt)
 
+    # Deviasi RAB: Baseline vs Revisi
+    baseline = prog.get("rabBaseline")
+    if baseline:
+        RED = colors.HexColor("#DC2626")
+        b_items = baseline.get("items", [])
+        cur_map = {it["id"]: it for it in items}
+        b_ids = {bi["id"] for bi in b_items}
+        b_tot = baseline.get("totalItemValue", 0) or 0
+        c_tot = prog.get("totalItemValue", 0) or 0
+        d_tot = c_tot - b_tot
+        pct = (d_tot / b_tot * 100) if b_tot else 0
+        story.append(section("DEVIASI RAB \u2014 BASELINE VS REVISI"))
+        story.append(Paragraph(
+            f"Baseline disimpan <b>{_fmt(baseline.get('savedAt'))}</b>. Perbandingan nilai tiap area terhadap RAB awal (sebelum negosiasi).", st_small))
+        drows = [["AREA PEKERJAAN", "BASELINE", "REVISI", "SELISIH"]]
+        deltas = []
+        for bi in b_items:
+            cur = cur_map.get(bi["id"])
+            cur_val = cur["nilai"] if cur else 0
+            delta = cur_val - (bi.get("value", 0) or 0)
+            label = (bi.get("name", "-") or "-")[:44] + ("  (DIHAPUS)" if not cur else "")
+            drows.append([Paragraph(label, st_cell), rupiah(bi.get("value", 0)),
+                          rupiah(cur_val) if cur else "\u2014",
+                          (("+" if delta > 0 else "") + rupiah(delta)) if delta else "\u2014"])
+            deltas.append(delta)
+        for it in items:
+            if it["id"] not in b_ids:
+                drows.append([Paragraph((it["name"] or "-")[:44] + "  (BARU)", st_cell), "\u2014",
+                              rupiah(it["nilai"]), "+" + rupiah(it["nilai"])])
+                deltas.append(it["nilai"])
+        drows.append(["TOTAL RAB", rupiah(b_tot), rupiah(c_tot), (("+" if d_tot > 0 else "") + rupiah(d_tot)) if d_tot else "\u2014"])
+        dt = Table(drows, colWidths=[content_w * 0.46, content_w * 0.18, content_w * 0.18, content_w * 0.18], repeatRows=1)
+        dstyle = [("FONTSIZE", (0, 0), (-1, -1), 8), ("BACKGROUND", (0, 0), (-1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+                  ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("ROWBACKGROUNDS", (0, 1), (-1, -2), [WHITE, BG]),
+                  ("GRID", (0, 0), (-1, -1), 0.4, LINE), ("ALIGN", (1, 0), (-1, -1), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                  ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5), ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                  ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2E8F0")), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold")]
+        for idx, delta in enumerate(deltas, start=1):
+            col = RED if delta > 0 else (GREEN if delta < 0 else SLATE)
+            dstyle.append(("TEXTCOLOR", (3, idx), (3, idx), col))
+        dstyle.append(("TEXTCOLOR", (3, len(drows) - 1), (3, len(drows) - 1), RED if d_tot > 0 else (GREEN if d_tot < 0 else INK)))
+        dt.setStyle(TableStyle(dstyle))
+        story.append(Spacer(1, 6))
+        story.append(dt)
+        story.append(Spacer(1, 4))
+        arah = "kenaikan" if d_tot > 0 else ("penurunan" if d_tot < 0 else "tanpa perubahan")
+        story.append(Paragraph(
+            f"<font color='#2563EB'>&#9432;</font> <b>Total deviasi:</b> "
+            f"<font color='{(RED if d_tot > 0 else GREEN).hexval()}'><b>{('+' if d_tot > 0 else '')}{rupiah(d_tot)} ({('+' if d_tot > 0 else '')}{pct:.1f}%)</b></font> "
+            f"dari baseline &mdash; {arah} nilai RAB setelah negosiasi.", st_small))
+
     # Detailed per-area update history + photos
     for it in items:
         ents = entries_by_key.get(("item", it["id"]), [])
