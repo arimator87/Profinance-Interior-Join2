@@ -666,6 +666,36 @@ async def list_progress(item_id: str, subItemId: Optional[str] = Query(None), us
     return entries
 
 
+@api.put("/progress/{entry_id}")
+async def update_progress(entry_id: str, body: ProgressIn, user: dict = Depends(require_premium)):
+    entry = await db.progress_entries.find_one({"id": entry_id}, {"_id": 0})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entri tidak ditemukan")
+    wi = await db.work_items.find_one({"id": entry["workItemId"]}, {"_id": 0})
+    if not wi:
+        raise HTTPException(status_code=404, detail="Item tidak ditemukan")
+    await get_owned_project(wi["project_id"], user)
+    await db.progress_entries.update_one({"id": entry_id}, {"$set": {
+        "progress": max(0, min(100, body.progress)),
+        "notes": body.notes,
+        "date": body.date or entry.get("date"),
+        "photoUrls": body.photoUrls,
+    }})
+    return await db.progress_entries.find_one({"id": entry_id}, {"_id": 0})
+
+
+@api.delete("/progress/{entry_id}")
+async def delete_progress(entry_id: str, user: dict = Depends(require_premium)):
+    entry = await db.progress_entries.find_one({"id": entry_id}, {"_id": 0})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entri tidak ditemukan")
+    wi = await db.work_items.find_one({"id": entry["workItemId"]}, {"_id": 0})
+    if wi:
+        await get_owned_project(wi["project_id"], user)
+    await db.progress_entries.delete_one({"id": entry_id})
+    return {"ok": True}
+
+
 @api.get("/projects/{project_id}/progress-summary")
 async def progress_summary(project_id: str, user: dict = Depends(require_premium)):
     p = await get_owned_project(project_id, user)

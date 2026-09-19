@@ -4,9 +4,8 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Ruler, Loader2, TrendingUp, Wallet, HardHat } from "lucide-react";
+import { Ruler, Loader2, Check, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { rupiah } from "@/lib/format";
 
 export default function Login() {
   const { login, register, user } = useAuth();
@@ -64,23 +63,33 @@ export default function Login() {
             Kelola keuangan &<br />progress proyek interior<br />
             <span className="text-amber-400">tanpa ribet.</span>
           </h1>
-          <p className="mt-4 text-slate-300 max-w-md">
-            Catat cash flow, atur kasbon tukang, pantau kurva-S, dan cetak laporan PDF —
-            khusus untuk kontraktor interior & arsitektur.
+          <p className="mt-4 text-slate-300 max-w-md leading-relaxed">
+            Satu aplikasi untuk cash flow, kasbon tukang, progress kurva-S,
+            hingga laporan PDF — dirancang khusus kontraktor interior & arsitektur.
           </p>
 
-          <div className="mt-10 grid grid-cols-3 gap-4 max-w-md">
-            {[
-              { icon: Wallet, label: "Saldo Bersih", val: rupiah(184000000) },
-              { icon: TrendingUp, label: "Margin", val: "23.4%" },
-              { icon: HardHat, label: "Tukang Aktif", val: "8 org" },
-            ].map((k, i) => (
-              <div key={i} className="rounded-xl border border-white/10 bg-white/5 backdrop-blur p-4">
-                <k.icon className="w-4 h-4 text-amber-400" />
-                <div className="mt-2 font-mono font-bold text-sm">{k.val}</div>
-                <div className="text-[11px] text-slate-400">{k.label}</div>
-              </div>
-            ))}
+          <div className="mt-8 max-w-md">
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 mb-5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-[11px] font-semibold tracking-[0.15em] text-amber-300">FITUR TERBARU</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+              {[
+                "Portal Klien realtime + share WhatsApp",
+                "Impor RAB langsung dari Excel",
+                "Baseline vs Revisi RAB",
+                "Kurva-S cost-loaded & Time Schedule",
+                "Kasbon & Pelunasan Tukang",
+                "Laporan PDF profesional",
+              ].map((f, i) => (
+                <div key={i} className="flex items-center gap-2.5 text-sm text-slate-200">
+                  <span className="w-5 h-5 rounded-full bg-amber-500/15 flex items-center justify-center shrink-0">
+                    <Check className="w-3 h-3 text-amber-400" />
+                  </span>
+                  <span>{f}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 

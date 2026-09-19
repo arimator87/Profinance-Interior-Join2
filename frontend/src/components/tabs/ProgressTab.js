@@ -146,6 +146,7 @@ export function ProgressTab({ project }) {
   const [logOpen, setLogOpen] = useState(false);
   const [logTarget, setLogTarget] = useState(null); // {workItemId, subItemId, title, current}
   const [logForm, setLogForm] = useState({ progress: 0, notes: "", date: "" });
+  const [editingId, setEditingId] = useState(null);
   const [photos, setPhotos] = useState([]);
   const [entries, setEntries] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -209,6 +210,7 @@ export function ProgressTab({ project }) {
   const openLog = async (target) => {
     setLogTarget(target);
     setLogForm({ progress: target.current || 0, notes: "", date: "" });
+    setEditingId(null);
     setPhotos([]); setEntries([]);
     setLogOpen(true);
     try {
@@ -239,13 +241,47 @@ export function ProgressTab({ project }) {
   const submitLog = async () => {
     setBusy(true);
     try {
-      await api.post(`/workitems/${logTarget.workItemId}/progress`, {
-        progress: logForm.progress, notes: logForm.notes,
-        date: iso(logForm.date), photoUrls: photos, subItemId: logTarget.subItemId || null,
-      });
-      toast.success("Progress dicatat");
-      setLogOpen(false); await load();
-    } catch { toast.error("Gagal mencatat progress"); } finally { setBusy(false); }
+      const payload = { progress: logForm.progress, notes: logForm.notes, date: iso(logForm.date), photoUrls: photos, subItemId: logTarget.subItemId || null };
+      if (editingId) {
+        await api.put(`/progress/${editingId}`, payload);
+        toast.success("Progress diperbarui");
+      } else {
+        await api.post(`/workitems/${logTarget.workItemId}/progress`, payload);
+        toast.success("Progress dicatat");
+      }
+      setEditingId(null);
+      setLogForm({ progress: logTarget.current || 0, notes: "", date: "" });
+      setPhotos([]);
+      await refreshEntries();
+      await load();
+    } catch { toast.error("Gagal menyimpan progress"); } finally { setBusy(false); }
+  };
+  const refreshEntries = async () => {
+    if (!logTarget) return;
+    try {
+      const params = logTarget.subItemId ? { subItemId: logTarget.subItemId } : {};
+      const res = await api.get(`/workitems/${logTarget.workItemId}/progress`, { params });
+      setEntries(res.data);
+    } catch { /* ignore */ }
+  };
+  const startEdit = (e) => {
+    setEditingId(e.id);
+    setLogForm({ progress: e.progress, notes: e.notes || "", date: toDate(e.date) });
+    setPhotos(e.photoUrls || []);
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setLogForm({ progress: logTarget?.current || 0, notes: "", date: "" });
+    setPhotos([]);
+  };
+  const deleteEntry = async (id) => {
+    try {
+      await api.delete(`/progress/${id}`);
+      toast.success("Entri progress dihapus");
+      if (editingId === id) cancelEdit();
+      await refreshEntries();
+      await load();
+    } catch { toast.error("Gagal menghapus entri"); }
   };
 
   const toggleExpand = (id) => setExpanded((e) => ({ ...e, [id]: !e[id] }));
@@ -501,6 +537,12 @@ export function ProgressTab({ project }) {
         <DialogContent className="bg-white max-w-md max-h-[90vh] overflow-y-auto pf-scrollbar">
           <DialogHeader><DialogTitle className="font-display text-lg">{logTarget?.title}</DialogTitle></DialogHeader>
           <div className="space-y-4">
+            {editingId && (
+              <div className="flex items-center justify-between text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" data-testid="edit-mode-banner">
+                <span className="text-amber-700 flex items-center gap-1.5"><Pencil className="w-3.5 h-3.5" /> Mode edit — perbarui data lalu simpan</span>
+                <button data-testid="cancel-edit-btn" onClick={cancelEdit} className="text-amber-700 font-medium underline">Batal</button>
+              </div>
+            )}
             <div>
               <div className="flex items-center justify-between"><Label>Progress</Label><span className="font-mono font-bold text-amber-700">{logForm.progress}%</span></div>
               <Slider data-testid="log-progress-slider" value={[logForm.progress]} onValueChange={(v) => setLogForm({ ...logForm, progress: v[0] })} max={100} step={5} className="mt-3" />
@@ -521,19 +563,23 @@ export function ProgressTab({ project }) {
                 </div>
               ))}</div>}
             </div>
-            <Button data-testid="log-submit-button" onClick={submitLog} disabled={busy} className="w-full bg-amber-600 hover:bg-amber-700 text-white">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Simpan Progress"}</Button>
+            <Button data-testid="log-submit-button" onClick={submitLog} disabled={busy} className="w-full bg-amber-600 hover:bg-amber-700 text-white">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : (editingId ? "Perbarui Progress" : "Simpan Progress")}</Button>
 
             {entries.length > 0 && (
               <div className="pt-2 border-t border-slate-100">
-                <div className="text-xs font-semibold text-slate-500 mb-2">Riwayat Update</div>
-                <div className="space-y-2">
+                <div className="text-xs font-semibold text-slate-500 mb-2">Riwayat Update <span className="font-normal text-slate-400">· arahkan untuk edit/hapus</span></div>
+                <div className="space-y-1">
                   {entries.slice().reverse().map((e) => (
-                    <div key={e.id} className="flex gap-3 text-sm">
+                    <div key={e.id} className={`flex gap-3 text-sm rounded-lg px-2 py-1.5 -mx-2 transition-colors ${editingId === e.id ? "bg-amber-50" : "hover:bg-slate-50"}`} data-testid={`entry-${e.id}`}>
                       <div className="font-mono font-bold text-amber-700 w-12 shrink-0">{e.progress}%</div>
                       <div className="min-w-0 flex-1">
                         <div className="text-slate-700">{e.notes || "-"}</div>
                         <div className="text-[11px] text-slate-400">{fmtDate(e.date)}</div>
                         {e.photoUrls?.length > 0 && <div className="flex gap-1.5 mt-1 flex-wrap">{e.photoUrls.map((p, i) => <img key={i} src={fileUrl(p)} alt="" className="w-12 h-12 object-cover rounded border border-slate-200" />)}</div>}
+                      </div>
+                      <div className="flex items-start gap-0.5 shrink-0">
+                        <button data-testid={`edit-entry-${e.id}`} onClick={() => startEdit(e)} className="p-1.5 text-slate-400 hover:text-amber-600 rounded-md hover:bg-white" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
+                        <button data-testid={`delete-entry-${e.id}`} onClick={() => deleteEntry(e.id)} className="p-1.5 text-slate-400 hover:text-red-500 rounded-md hover:bg-white" title="Hapus"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
                     </div>
                   ))}
