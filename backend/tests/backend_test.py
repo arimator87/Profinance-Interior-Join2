@@ -263,3 +263,117 @@ class TestMisc:
         assert "Termin" in d["income"]
         assert "Pelunasan" in d["income"]
         assert "Lainnya" in d["income"]
+
+
+# ---------- Sub Items (Premium) ----------
+class TestSubItems:
+    def _make_workitem(self, s):
+        projects = s.get(f"{API}/projects").json()
+        pid = projects[0]["id"]
+        r = s.post(f"{API}/projects/{pid}/workitems", json={"name": "TEST WI subs", "nilai": 0})
+        assert r.status_code == 200
+        return pid, r.json()["id"]
+
+    def test_free_user_blocked_from_subitems(self, fresh_user):
+        # fresh_user is free (no seed yet in this class scope - use fresh reg)
+        email = f"free_{uuid.uuid4().hex[:8]}@example.com"
+        s = requests.Session()
+        r = s.post(f"{API}/auth/register", json={"email": email, "name": "F", "password": "Password123"})
+        assert r.status_code == 200
+        s.headers.update({"Authorization": f"Bearer {r.json()['token']}"})
+        # try a random item id
+        r1 = s.post(f"{API}/workitems/does-not-matter/subitems", json={"name": "x", "harga": 1})
+        r2 = s.get(f"{API}/workitems/does-not-matter/subitems")
+        r3 = s.put(f"{API}/subitems/xxx", json={"name": "x", "harga": 1})
+        r4 = s.delete(f"{API}/subitems/xxx")
+        assert r1.status_code == 403
+        assert r2.status_code == 403
+        assert r3.status_code == 403
+        assert r4.status_code == 403
+
+    def test_subitem_crud_and_autosum(self, premium_session):
+        pid, iid = self._make_workitem(premium_session)
+        try:
+            # create 2 subs
+            r1 = premium_session.post(f"{API}/workitems/{iid}/subitems", json={"name": "TEST kayu", "harga": 4000000, "status": False})
+            r2 = premium_session.post(f"{API}/workitems/{iid}/subitems", json={"name": "TEST cat", "harga": 6000000, "status": True})
+            assert r1.status_code == 200 and r2.status_code == 200
+            s1_id = r1.json()["id"]
+            s2_id = r2.json()["id"]
+            # list
+            lst = premium_session.get(f"{API}/workitems/{iid}/subitems").json()
+            assert len(lst) == 2
+            assert all("project_id" not in s for s in lst), "project_id should not leak"
+
+            # workitems reflects autosum
+            wis = premium_session.get(f"{API}/projects/{pid}/workitems").json()
+            parent = next(w for w in wis if w["id"] == iid)
+            assert parent["hasSubs"] is True
+            assert parent["subTotal"] == 10000000
+            assert parent["nilai"] == 10000000  # nilai auto-sum
+            assert parent["doneValue"] == 6000000
+            assert parent["lastProgress"] == 60.0
+
+            # toggle s2 done->false
+            up = premium_session.put(f"{API}/subitems/{s2_id}", json={"name": "TEST cat", "harga": 6000000, "status": False})
+            assert up.status_code == 200
+            wis = premium_session.get(f"{API}/projects/{pid}/workitems").json()
+            parent = next(w for w in wis if w["id"] == iid)
+            assert parent["doneValue"] == 0
+            assert parent["lastProgress"] == 0
+
+            # toggle s1 to done
+            premium_session.put(f"{API}/subitems/{s1_id}", json={"name": "TEST kayu", "harga": 4000000, "status": True})
+            wis = premium_session.get(f"{API}/projects/{pid}/workitems").json()
+            parent = next(w for w in wis if w["id"] == iid)
+            assert parent["doneValue"] == 4000000
+            assert parent["lastProgress"] == 40.0
+
+            # delete a sub
+            d = premium_session.delete(f"{API}/subitems/{s2_id}")
+            assert d.status_code == 200
+            wis = premium_session.get(f"{API}/projects/{pid}/workitems").json()
+            parent = next(w for w in wis if w["id"] == iid)
+            assert parent["subTotal"] == 4000000
+            assert parent["subCount"] == 1
+        finally:
+            premium_session.delete(f"{API}/workitems/{iid}")
+
+    def test_cost_loaded_project_progress_hybrid(self, premium_session):
+        # Create project with nominal, add one item with subs and another manual
+        r = premium_session.post(f"{API}/projects", json={
+            "name": "TEST Sub Hybrid", "owner": "T", "nominal": 100000000, "category": "Residensial"
+        })
+        pid = r.json()["id"]
+        try:
+            # item A: with subs 20jt done 10jt
+            a = premium_session.post(f"{API}/projects/{pid}/workitems", json={"name": "A", "nilai": 0}).json()
+            premium_session.post(f"{API}/workitems/{a['id']}/subitems", json={"name": "s1", "harga": 10000000, "status": True})
+            premium_session.post(f"{API}/workitems/{a['id']}/subitems", json={"name": "s2", "harga": 10000000, "status": False})
+            # item B: manual, nilai 30jt, progress 50%
+            b = premium_session.post(f"{API}/projects/{pid}/workitems", json={"name": "B", "nilai": 30000000}).json()
+            premium_session.post(f"{API}/workitems/{b['id']}/progress", json={"progress": 50, "notes": "n"})
+            ps = premium_session.get(f"{API}/projects/{pid}/progress-summary").json()
+            # A contributes 10jt done, B contributes 50%*30jt=15jt -> 25jt / 100jt = 25%
+            assert ps["totalProgress"] == 25.0
+        finally:
+            premium_session.delete(f"{API}/projects/{pid}")
+
+    def test_delete_workitem_cascades_subitems(self, premium_session):
+        pid, iid = self._make_workitem(premium_session)
+        premium_session.post(f"{API}/workitems/{iid}/subitems", json={"name": "TEST k", "harga": 1000, "status": False})
+        assert len(premium_session.get(f"{API}/workitems/{iid}/subitems").json()) == 1
+        premium_session.delete(f"{API}/workitems/{iid}")
+        r = premium_session.get(f"{API}/workitems/{iid}/subitems")
+        assert r.status_code == 404
+
+    def test_delete_project_cascades_subitems(self, premium_session):
+        r = premium_session.post(f"{API}/projects", json={
+            "name": "TEST cascade", "owner": "T", "nominal": 1000000, "category": "Residensial"
+        }).json()
+        pid = r["id"]
+        wi = premium_session.post(f"{API}/projects/{pid}/workitems", json={"name": "X", "nilai": 0}).json()
+        premium_session.post(f"{API}/workitems/{wi['id']}/subitems", json={"name": "s", "harga": 100, "status": False})
+        premium_session.delete(f"{API}/projects/{pid}")
+        r = premium_session.get(f"{API}/workitems/{wi['id']}/subitems")
+        assert r.status_code == 404

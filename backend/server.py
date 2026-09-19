@@ -93,6 +93,8 @@ class WorkerPayIn(BaseModel):
 class WorkItemIn(BaseModel):
     name: str
     nilai: int = 0
+    startDate: Optional[str] = None
+    endDate: Optional[str] = None
 
 
 class ProgressIn(BaseModel):
@@ -100,12 +102,17 @@ class ProgressIn(BaseModel):
     progress: int = 0
     notes: str = ""
     photoUrls: List[str] = []
+    subItemId: Optional[str] = None
 
 
 class SubItemIn(BaseModel):
     name: str
     harga: int = 0
     status: bool = False
+
+
+class RabIn(BaseModel):
+    rabTotal: int = 0
 
 
 # ---------- Finance calc ----------
@@ -151,54 +158,79 @@ async def compute_worker(worker: dict) -> dict:
     }
 
 
-async def compute_workitems(project: dict):
+async def compute_progress(project: dict):
     project_id = project["id"]
-    nominal = project.get("nominal", 0) or 0
-    items = await db.work_items.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
-    result = []
-    for wi in items:
-        subs = await db.sub_items.find({"work_item_id": wi["id"]}, {"_id": 0}).to_list(2000)
-        sub_total = sum(s.get("harga", 0) for s in subs)
-        done_total = sum(s.get("harga", 0) for s in subs if s.get("status"))
+    items_raw = await db.work_items.find({"project_id": project_id}, {"_id": 0}).sort("createdAt", 1).to_list(2000)
+    prepared = []
+    total_item_value = 0
+    for wi in items_raw:
+        subs = await db.sub_items.find({"work_item_id": wi["id"]}, {"_id": 0}).sort("createdAt", 1).to_list(2000)
         has_subs = len(subs) > 0
-        entries = await db.progress_entries.find(
-            {"workItemId": wi["id"]}, {"_id": 0}
-        ).sort("date", 1).to_list(2000)
-        manual_last = entries[-1]["progress"] if entries else 0
-        effective_nilai = sub_total if has_subs else wi.get("nilai", 0)
-        if has_subs:
-            item_progress = round(done_total / sub_total * 100, 1) if sub_total else 0
+        item_value = sum(s.get("harga", 0) for s in subs) if has_subs else (wi.get("nilai", 0) or 0)
+        total_item_value += item_value
+        prepared.append((wi, subs, has_subs, item_value))
+
+    rab = project.get("rabTotal", 0) or 0
+    if rab <= 0:
+        rab = total_item_value
+
+    async def last_prog(work_item_id, sub_item_id):
+        q = {"workItemId": work_item_id}
+        if sub_item_id is None:
+            q["$or"] = [{"subItemId": None}, {"subItemId": {"$exists": False}}]
         else:
-            item_progress = manual_last
-        weight = (effective_nilai / nominal * 100) if nominal else 0
-        result.append({
-            "id": wi["id"],
-            "name": wi["name"],
-            "nilai": effective_nilai,
-            "manualNilai": wi.get("nilai", 0),
-            "createdAt": wi.get("createdAt"),
-            "weight": round(weight, 2),
-            "lastProgress": item_progress,
-            "subTotal": sub_total,
-            "doneValue": done_total,
-            "subCount": len(subs),
-            "hasSubs": has_subs,
-            "entryCount": len(entries),
+            q["subItemId"] = sub_item_id
+        entries = await db.progress_entries.find(q, {"_id": 0}).sort("date", 1).to_list(2000)
+        return (entries[-1]["progress"] if entries else 0), len(entries)
+
+    items = []
+    project_completed = 0
+    for wi, subs, has_subs, item_value in prepared:
+        item_weight = (item_value / rab * 100) if rab else 0
+        sub_list = []
+        if has_subs:
+            completed = 0
+            for s in subs:
+                sp, scount = await last_prog(wi["id"], s["id"])
+                sw = (s.get("harga", 0) / rab * 100) if rab else 0
+                completed += s.get("harga", 0) * sp / 100
+                sub_list.append({
+                    "id": s["id"], "name": s["name"], "harga": s.get("harga", 0),
+                    "weight": round(sw, 2), "lastProgress": sp, "entryCount": scount,
+                })
+            item_progress = round(completed / item_value * 100, 1) if item_value else 0
+            item_completed = completed
+            entry_count = sum(x["entryCount"] for x in sub_list)
+        else:
+            ip, icount = await last_prog(wi["id"], None)
+            item_progress = ip
+            item_completed = item_value * ip / 100
+            entry_count = icount
+        project_completed += item_completed
+        items.append({
+            "id": wi["id"], "name": wi["name"], "nilai": item_value, "manualNilai": wi.get("nilai", 0),
+            "startDate": wi.get("startDate"), "endDate": wi.get("endDate"),
+            "weight": round(item_weight, 2), "lastProgress": item_progress,
+            "hasSubs": has_subs, "subItems": sub_list, "subCount": len(subs),
+            "subTotal": item_value if has_subs else 0, "doneValue": round(item_completed),
+            "entryCount": entry_count,
         })
-    return result
+
+    total_progress = round(project_completed / rab * 100, 2) if rab else 0
+    return {
+        "items": items, "rab": rab, "rabTotal": project.get("rabTotal", 0) or 0,
+        "totalItemValue": total_item_value, "totalProgress": total_progress,
+        "completedValue": round(project_completed),
+    }
+
+
+async def compute_workitems(project: dict):
+    return (await compute_progress(project))["items"]
 
 
 async def project_total_progress(project: dict):
-    items = await compute_workitems(project)
-    nominal = project.get("nominal", 0) or 0
-    done_value = 0
-    for it in items:
-        if it["hasSubs"]:
-            done_value += it["doneValue"]
-        else:
-            done_value += it["lastProgress"] / 100 * it["nilai"]
-    total = (done_value / nominal * 100) if nominal else 0
-    return round(total, 2), items
+    data = await compute_progress(project)
+    return data["totalProgress"], data["items"]
 
 
 async def get_owned_project(project_id: str, user: dict) -> dict:
@@ -497,6 +529,18 @@ async def list_workitems(project_id: str, user: dict = Depends(require_premium))
     return await compute_workitems(p)
 
 
+@api.put("/workitems/{item_id}")
+async def update_workitem(item_id: str, body: WorkItemIn, user: dict = Depends(require_premium)):
+    wi = await db.work_items.find_one({"id": item_id}, {"_id": 0})
+    if not wi:
+        raise HTTPException(status_code=404, detail="Item tidak ditemukan")
+    await get_owned_project(wi["project_id"], user)
+    await db.work_items.update_one({"id": item_id}, {"$set": body.model_dump()})
+    p = await db.projects.find_one({"id": wi["project_id"]}, {"_id": 0})
+    items = await compute_workitems(p)
+    return next((i for i in items if i["id"] == item_id), {})
+
+
 @api.delete("/workitems/{item_id}")
 async def delete_workitem(item_id: str, user: dict = Depends(require_premium)):
     wi = await db.work_items.find_one({"id": item_id}, {"_id": 0})
@@ -572,6 +616,7 @@ async def add_progress(item_id: str, body: ProgressIn, user: dict = Depends(requ
     doc = {
         "id": str(uuid.uuid4()),
         "workItemId": item_id,
+        "subItemId": body.subItemId,
         "date": body.date or now_iso(),
         "progress": max(0, min(100, body.progress)),
         "notes": body.notes,
@@ -584,61 +629,119 @@ async def add_progress(item_id: str, body: ProgressIn, user: dict = Depends(requ
 
 
 @api.get("/workitems/{item_id}/progress")
-async def list_progress(item_id: str, user: dict = Depends(require_premium)):
+async def list_progress(item_id: str, subItemId: Optional[str] = Query(None), user: dict = Depends(require_premium)):
     wi = await db.work_items.find_one({"id": item_id}, {"_id": 0})
     if not wi:
         raise HTTPException(status_code=404, detail="Item tidak ditemukan")
     await get_owned_project(wi["project_id"], user)
-    entries = await db.progress_entries.find({"workItemId": item_id}, {"_id": 0}).sort("date", 1).to_list(2000)
+    q = {"workItemId": item_id}
+    if subItemId:
+        q["subItemId"] = subItemId
+    else:
+        q["$or"] = [{"subItemId": None}, {"subItemId": {"$exists": False}}]
+    entries = await db.progress_entries.find(q, {"_id": 0}).sort("date", 1).to_list(2000)
     return entries
 
 
 @api.get("/projects/{project_id}/progress-summary")
 async def progress_summary(project_id: str, user: dict = Depends(require_premium)):
     p = await get_owned_project(project_id, user)
-    total, items = await project_total_progress(p)
-    # Build S-curve: planned (linear) vs actual (weighted cumulative) over entry dates
+    data = await compute_progress(p)
+    items = data["items"]
     all_entries = await db.progress_entries.find(
         {"workItemId": {"$in": [i["id"] for i in items]}}, {"_id": 0}
     ).sort("date", 1).to_list(5000)
-    nominal = p.get("nominal", 0) or 0
-    weight_map = {i["id"]: i["weight"] for i in items}
-    total_weight = sum(weight_map.values())
-
-    dates = sorted({e["date"][:10] for e in all_entries})
-    start = (p.get("tanggalMulai") or (dates[0] if dates else now_iso()))[:10]
-    end = (p.get("targetSelesai") or (dates[-1] if dates else now_iso()))[:10]
 
     def parse(d):
         try:
-            return datetime.fromisoformat(d)
+            return datetime.fromisoformat(str(d)[:19])
         except Exception:
-            return datetime.now()
+            return None
 
-    sd, ed = parse(start), parse(end)
-    span = max((ed - sd).days, 1)
+    proj_start = parse(p.get("tanggalMulai"))
+    proj_end = parse(p.get("targetSelesai"))
 
-    curve = []
-    for d in dates:
-        # actual weighted progress using latest entry per item up to date d
+    leaves = []  # (workItemId, subItemId, weight, start_dt, end_dt)
+    for i in items:
+        s = parse(i.get("startDate")) or proj_start
+        e = parse(i.get("endDate")) or proj_end
+        if i["hasSubs"]:
+            for su in i["subItems"]:
+                leaves.append((i["id"], su["id"], su["weight"], s, e))
+        else:
+            leaves.append((i["id"], None, i["weight"], s, e))
+
+    entry_dts = [parse(e["date"]) for e in all_entries if parse(e["date"])]
+    starts = [s for (_, _, _, s, _) in leaves if s]
+    ends = [e for (_, _, _, _, e) in leaves if e]
+    candidates = starts + ends + entry_dts
+    if candidates:
+        start_dt = min(starts + entry_dts) if (starts + entry_dts) else min(candidates)
+        end_dt = max(ends + entry_dts) if (ends + entry_dts) else max(candidates)
+    else:
+        start_dt = end_dt = datetime.now().replace(microsecond=0)
+    if end_dt < start_dt:
+        end_dt = start_dt
+    span_days = max((end_dt - start_dt).days, 1)
+
+    def planned_at(dt):
+        tot = 0.0
+        for (_, _, w, s, e) in leaves:
+            ls = s or start_dt
+            le = e or end_dt
+            if le <= ls:
+                frac = 1.0 if dt >= ls else 0.0
+            else:
+                frac = max(0.0, min(1.0, (dt - ls).days / (le - ls).days))
+            tot += w * frac
+        return tot
+
+    wmap = {(wi, si): w for (wi, si, w, _, _) in leaves}
+
+    def actual_at(dstr):
         latest = {}
         for e in all_entries:
-            if e["date"][:10] <= d:
-                latest[e["workItemId"]] = e["progress"]
-        if total_weight:
-            actual = sum(weight_map.get(iid, 0) * prog / 100 for iid, prog in latest.items()) / total_weight * 100
-        else:
-            actual = 0
-        planned = min(100, max(0, (parse(d) - sd).days / span * 100))
-        curve.append({"date": d, "actual": round(actual, 1), "planned": round(planned, 1)})
+            if e["date"][:10] <= dstr:
+                latest[(e["workItemId"], e.get("subItemId") or None)] = e["progress"]
+        return sum(wmap.get(k, 0) * prog / 100 for k, prog in latest.items())
 
+    ticks = set()
+    for k in range(11):
+        ticks.add((start_dt + timedelta(days=round(span_days * k / 10))).date().isoformat())
+    for e in all_entries:
+        pd = parse(e["date"])
+        if pd:
+            ticks.add(pd.date().isoformat())
+
+    curve = []
+    for d in sorted(ticks):
+        dt = datetime.fromisoformat(d)
+        curve.append({
+            "date": d,
+            "planned": round(min(100.0, planned_at(dt)), 1),
+            "actual": round(min(100.0, actual_at(d)), 1),
+        })
+
+    today = datetime.now().replace(microsecond=0)
     return {
-        "totalProgress": total,
+        "totalProgress": data["totalProgress"],
+        "plannedProgress": round(min(100.0, planned_at(today)), 1),
         "items": items,
         "curve": curve,
-        "start": start,
-        "end": end,
+        "rab": data["rab"],
+        "rabTotal": data["rabTotal"],
+        "totalItemValue": data["totalItemValue"],
+        "completedValue": data["completedValue"],
+        "start": start_dt.date().isoformat(),
+        "end": end_dt.date().isoformat(),
     }
+
+
+@api.put("/projects/{project_id}/rab-total")
+async def set_rab_total(project_id: str, body: RabIn, user: dict = Depends(get_current_user)):
+    await get_owned_project(project_id, user)
+    await db.projects.update_one({"id": project_id}, {"$set": {"rabTotal": body.rabTotal}})
+    return {"rabTotal": body.rabTotal}
 
 
 # ---------- Report (Premium) ----------
