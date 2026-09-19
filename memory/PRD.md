@@ -36,6 +36,7 @@ users, user_sessions, projects, transactions, workers, work_items, progress_entr
 - Report: Pie (expense by category), horizontal Bar (kontrak/pengeluaran/margin), Export PDF (reportlab, embeds photos)
 - Pricing page + mockup payment modal (QRIS/Bank/E-wallet) -> upgrade premium
 - Demo seed endpoint (3 Indonesian interior projects)
+- Portal Klien publik (2026-06-19): link berbasis nama proyek (portalSlug = slug-nama + token hex), route publik `/portal/:slug`, tombol "Portal Klien" di tab Progress dengan salin link + share ke WhatsApp (wa.me). Portal menampilkan progress %, Kurva-S, rincian pekerjaan (TANPA rupiah), riwayat pembayaran + terbayar/sisa tagihan, dan galeri foto dokumentasi. Foto disajikan via endpoint publik ber-scope (`/api/public/portal/{slug}/file`) yang hanya melayani path foto milik proyek tsb. Link otomatis mati saat proyek dihapus.
 
 ## Status
 Verified by testing agent: backend 20/20, frontend all tested flows pass. Payment is MOCKED.

@@ -1,9 +1,12 @@
 import os
+import re
 import uuid
+import secrets
 import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, List
+from urllib.parse import quote
 
 from fastapi import (
     FastAPI, APIRouter, Depends, HTTPException, Request, Response,
@@ -38,6 +41,19 @@ EXPENSE_CATEGORIES = ["Material", "Makan", "Toll", "Bensin", "Lainnya"]
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def slugify(name: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "proyek").lower()).strip("-")
+    return s[:40] or "proyek"
+
+
+async def ensure_portal_slug(p: dict) -> str:
+    if p.get("portalSlug"):
+        return p["portalSlug"]
+    slug = f"{slugify(p.get('name'))}-{secrets.token_hex(3)}"
+    await db.projects.update_one({"id": p["id"]}, {"$set": {"portalSlug": slug}})
+    return slug
 
 
 # ---------- Schemas ----------
@@ -312,6 +328,7 @@ async def create_project(body: ProjectIn, user: dict = Depends(get_current_user)
         "id": str(uuid.uuid4()),
         "user_id": user["user_id"],
         **body.model_dump(),
+        "portalSlug": f"{slugify(body.name)}-{secrets.token_hex(3)}",
         "createdAt": now_iso(),
     }
     await db.projects.insert_one(doc)
@@ -646,6 +663,11 @@ async def list_progress(item_id: str, subItemId: Optional[str] = Query(None), us
 @api.get("/projects/{project_id}/progress-summary")
 async def progress_summary(project_id: str, user: dict = Depends(require_premium)):
     p = await get_owned_project(project_id, user)
+    return await _compute_scurve(p)
+
+
+async def _compute_scurve(p: dict):
+    project_id = p["id"]
     data = await compute_progress(p)
     items = data["items"]
     all_entries = await db.progress_entries.find(
@@ -744,6 +766,101 @@ async def set_rab_total(project_id: str, body: RabIn, user: dict = Depends(get_c
     return {"rabTotal": body.rabTotal}
 
 
+@api.get("/projects/{project_id}/portal-link")
+async def portal_link(project_id: str, user: dict = Depends(get_current_user)):
+    p = await get_owned_project(project_id, user)
+    slug = await ensure_portal_slug(p)
+    return {"slug": slug}
+
+
+# ---------- Public Client Portal (no auth) ----------
+@api.get("/public/portal/{slug}")
+async def public_portal(slug: str):
+    p = await db.projects.find_one({"portalSlug": slug}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Portal tidak ditemukan")
+    summary = await compute_summary(p)
+    scurve = await _compute_scurve(p)
+
+    items = []
+    name_map = {}
+    sub_name = {}
+    for i in scurve["items"]:
+        name_map[i["id"]] = i["name"]
+        subs = []
+        for s in i.get("subItems", []):
+            sub_name[s["id"]] = s["name"]
+            subs.append({"id": s["id"], "name": s["name"], "lastProgress": s["lastProgress"]})
+        items.append({
+            "id": i["id"], "name": i["name"], "lastProgress": i["lastProgress"],
+            "startDate": i["startDate"], "endDate": i["endDate"],
+            "hasSubs": i["hasSubs"], "subItems": subs,
+        })
+
+    item_ids = [i["id"] for i in scurve["items"]]
+    entries = await db.progress_entries.find(
+        {"workItemId": {"$in": item_ids}}, {"_id": 0}
+    ).sort("date", -1).to_list(3000)
+    gallery = []
+    for e in entries:
+        urls = [f"/api/public/portal/{slug}/file?path={quote(u)}" for u in (e.get("photoUrls") or [])]
+        if not urls:
+            continue
+        label = name_map.get(e["workItemId"], "")
+        if e.get("subItemId"):
+            label = f"{label} › {sub_name.get(e['subItemId'], '')}"
+        gallery.append({
+            "date": e["date"], "notes": e.get("notes", ""), "label": label,
+            "progress": e.get("progress", 0), "photos": urls,
+        })
+
+    txs = await db.transactions.find(
+        {"project_id": p["id"], "type": "in"}, {"_id": 0}
+    ).sort("date", -1).to_list(5000)
+    payments = [{
+        "date": t["date"], "category": t.get("category", "Lainnya"),
+        "description": t.get("description", ""), "amount": t["amount"],
+    } for t in txs]
+
+    return {
+        "project": {
+            "name": p.get("name"), "companyName": p.get("companyName", ""),
+            "owner": p.get("owner", ""), "alamatProyek": p.get("alamatProyek", ""),
+            "category": p.get("category", ""), "status": p.get("status", ""),
+            "targetSelesai": p.get("targetSelesai"), "tanggalMulai": p.get("tanggalMulai"),
+            "thumbnail": p.get("thumbnail"),
+        },
+        "totalProgress": scurve["totalProgress"],
+        "plannedProgress": scurve["plannedProgress"],
+        "curve": scurve["curve"], "start": scurve["start"], "end": scurve["end"],
+        "items": items, "gallery": gallery,
+        "payments": payments,
+        "terbayar": summary["terbayar"], "sisaTagihan": summary["sisaTagihan"],
+        "nominal": summary["nominal"],
+    }
+
+
+@api.get("/public/portal/{slug}/file")
+async def public_portal_file(slug: str, path: str = Query(...)):
+    p = await db.projects.find_one({"portalSlug": slug}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Portal tidak ditemukan")
+    wi = await db.work_items.find({"project_id": p["id"]}, {"_id": 0, "id": 1}).to_list(2000)
+    item_ids = [x["id"] for x in wi]
+    entries = await db.progress_entries.find(
+        {"workItemId": {"$in": item_ids}}, {"_id": 0, "photoUrls": 1}
+    ).to_list(5000)
+    allowed = set()
+    for e in entries:
+        for u in (e.get("photoUrls") or []):
+            allowed.add(u)
+    if path not in allowed:
+        raise HTTPException(status_code=404, detail="File tidak ditemukan")
+    data, content_type = get_object(path)
+    record = await db.files.find_one({"storage_path": path}, {"_id": 0})
+    return Response(content=data, media_type=(record or {}).get("content_type", content_type))
+
+
 # ---------- Report (Premium) ----------
 @api.get("/projects/{project_id}/report")
 async def report(project_id: str, user: dict = Depends(require_premium)):
@@ -808,7 +925,7 @@ async def progress_pdf(project_id: str, request: Request, auth: Optional[str] = 
     await require_premium(user)
     p = await get_owned_project(project_id, user)
     summary = await compute_summary(p)
-    prog = await progress_summary(project_id, user)
+    prog = await _compute_scurve(p)
     txs = await db.transactions.find({"project_id": project_id}, {"_id": 0}).sort("date", 1).to_list(5000)
     item_ids = [i["id"] for i in prog.get("items", [])]
     entries = await db.progress_entries.find(

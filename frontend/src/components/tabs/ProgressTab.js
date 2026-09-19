@@ -17,7 +17,7 @@ import {
 } from "recharts";
 import {
   Plus, Loader2, Trash2, ListChecks, Camera, TrendingUp, ChevronDown, Pencil, PackagePlus,
-  CalendarRange, Wallet, Save, FileDown,
+  CalendarRange, Wallet, Save, FileDown, Share2, Copy, Check, MessageCircle,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -38,6 +38,29 @@ export function ProgressTab({ project }) {
 
   const [subOpen, setSubOpen] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+
+  const [shareOpen, setShareOpen] = useState(false);
+  const [portalUrl, setPortalUrl] = useState("");
+  const [sharing, setSharing] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const openShare = async () => {
+    setSharing(true);
+    try {
+      const res = await api.get(`/projects/${project.id}/portal-link`);
+      setPortalUrl(`${window.location.origin}/portal/${res.data.slug}`);
+      setCopied(false);
+      setShareOpen(true);
+    } catch { toast.error("Gagal membuat link portal"); } finally { setSharing(false); }
+  };
+  const copyLink = async () => {
+    try { await navigator.clipboard.writeText(portalUrl); setCopied(true); toast.success("Link disalin"); setTimeout(() => setCopied(false), 2000); }
+    catch { toast.error("Gagal menyalin"); }
+  };
+  const shareWhatsApp = () => {
+    const msg = `Halo, berikut link untuk memantau progress pekerjaan proyek *${project.name}* secara realtime:\n\n${portalUrl}\n\nTerima kasih.`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+  };
 
   const exportProgressPdf = async () => {
     setExportingPdf(true);
@@ -204,6 +227,9 @@ export function ProgressTab({ project }) {
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-display font-bold text-lg text-slate-900">Item Pekerjaan (RAB)</h3>
         <div className="flex gap-2">
+          <Button data-testid="btn-share-portal" size="sm" variant="outline" onClick={openShare} disabled={sharing} className="gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50">
+            {sharing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />} Portal Klien
+          </Button>
           <Button data-testid="btn-progress-pdf" size="sm" variant="outline" onClick={exportProgressPdf} disabled={exportingPdf} className="gap-1.5">
             {exportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />} Laporan Progress PDF
           </Button>
@@ -406,6 +432,24 @@ export function ProgressTab({ project }) {
                 </div>
               </div>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Client portal share dialog */}
+      <Dialog open={shareOpen} onOpenChange={setShareOpen}>
+        <DialogContent className="bg-white max-w-md">
+          <DialogHeader><DialogTitle className="font-display text-lg flex items-center gap-2"><Share2 className="w-5 h-5 text-amber-600" /> Bagikan Portal Klien</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-500">Klien dapat memantau progress pekerjaan, kurva-S, dan foto dokumentasi secara realtime lewat link ini — tanpa perlu login. Data biaya & RAB tetap tersembunyi.</p>
+            <div className="flex items-center gap-2">
+              <Input data-testid="portal-url-input" readOnly value={portalUrl} className="font-mono text-xs bg-slate-50" onFocus={(e) => e.target.select()} />
+              <Button data-testid="portal-copy-btn" type="button" variant="outline" size="icon" onClick={copyLink} className="shrink-0">
+                {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+              </Button>
+            </div>
+            <Button data-testid="portal-whatsapp-btn" onClick={shareWhatsApp} className="w-full gap-2 bg-green-600 hover:bg-green-700 text-white">
+              <MessageCircle className="w-4 h-4" /> Bagikan ke WhatsApp
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
