@@ -242,6 +242,7 @@ async def compute_progress(project: dict):
         "items": items, "rab": rab, "rabTotal": project.get("rabTotal", 0) or 0,
         "totalItemValue": total_item_value, "totalProgress": total_progress,
         "completedValue": round(project_completed),
+        "rabBaseline": project.get("rabBaseline"),
     }
 
 
@@ -759,6 +760,7 @@ async def _compute_scurve(p: dict):
         "rabTotal": data["rabTotal"],
         "totalItemValue": data["totalItemValue"],
         "completedValue": data["completedValue"],
+        "rabBaseline": data["rabBaseline"],
         "start": start_dt.date().isoformat(),
         "end": end_dt.date().isoformat(),
     }
@@ -769,6 +771,27 @@ async def set_rab_total(project_id: str, body: RabIn, user: dict = Depends(get_c
     await get_owned_project(project_id, user)
     await db.projects.update_one({"id": project_id}, {"$set": {"rabTotal": body.rabTotal}})
     return {"rabTotal": body.rabTotal}
+
+
+@api.post("/projects/{project_id}/rab-baseline")
+async def save_rab_baseline(project_id: str, user: dict = Depends(require_premium)):
+    p = await get_owned_project(project_id, user)
+    data = await compute_progress(p)
+    baseline = {
+        "savedAt": now_iso(),
+        "rabTotal": data["rabTotal"],
+        "totalItemValue": data["totalItemValue"],
+        "items": [{"id": i["id"], "name": i["name"], "value": i["nilai"]} for i in data["items"]],
+    }
+    await db.projects.update_one({"id": project_id}, {"$set": {"rabBaseline": baseline}})
+    return baseline
+
+
+@api.delete("/projects/{project_id}/rab-baseline")
+async def delete_rab_baseline(project_id: str, user: dict = Depends(require_premium)):
+    await get_owned_project(project_id, user)
+    await db.projects.update_one({"id": project_id}, {"$unset": {"rabBaseline": ""}})
+    return {"ok": True}
 
 
 @api.get("/projects/{project_id}/portal-link")

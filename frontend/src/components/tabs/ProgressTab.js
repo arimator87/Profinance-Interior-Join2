@@ -18,7 +18,7 @@ import {
 import {
   Plus, Loader2, Trash2, ListChecks, Camera, TrendingUp, ChevronDown, Pencil, PackagePlus,
   CalendarRange, Wallet, Save, FileDown, Share2, Copy, Check, MessageCircle, X, RotateCcw,
-  FileSpreadsheet, Download,
+  FileSpreadsheet, Download, Flag, GitCompare,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -55,6 +55,39 @@ export function ProgressTab({ project }) {
       const a = document.createElement("a"); a.href = url; a.download = "Template-RAB.xlsx";
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     } catch { toast.error("Gagal unduh template"); }
+  };
+
+  const [compareOpen, setCompareOpen] = useState(false);
+  const saveBaseline = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/projects/${project.id}/rab-baseline`);
+      toast.success("Baseline RAB disimpan");
+      await load();
+    } catch { toast.error("Gagal menyimpan baseline"); } finally { setBusy(false); }
+  };
+  const deleteBaseline = async () => {
+    try {
+      await api.delete(`/projects/${project.id}/rab-baseline`);
+      toast.success("Baseline dihapus");
+      setCompareOpen(false);
+      await load();
+    } catch { toast.error("Gagal hapus baseline"); }
+  };
+  const buildComparison = () => {
+    const b = data?.rabBaseline;
+    if (!b) return [];
+    const curItems = data.items || [];
+    const curMap = new Map(curItems.map((i) => [i.id, i]));
+    const bIds = new Set((b.items || []).map((i) => i.id));
+    const rows = [];
+    (b.items || []).forEach((bi) => {
+      const cur = curMap.get(bi.id);
+      const currentValue = cur ? cur.nilai : 0;
+      rows.push({ name: bi.name, baselineValue: bi.value, currentValue, delta: currentValue - bi.value, status: cur ? (currentValue !== bi.value ? "changed" : "same") : "removed" });
+    });
+    curItems.forEach((ci) => { if (!bIds.has(ci.id)) rows.push({ name: ci.name, baselineValue: 0, currentValue: ci.nilai, delta: ci.nilai, status: "new" }); });
+    return rows;
   };
 
   const [itemOpen, setItemOpen] = useState(false);
@@ -261,6 +294,26 @@ export function ProgressTab({ project }) {
           <Button data-testid="btn-import-rab" size="sm" variant="outline" onClick={() => rabFileRef.current?.click()} disabled={importing} className="h-8 gap-1.5 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50">
             {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5" />} Impor Excel
           </Button>
+        </div>
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          {!data.rabBaseline ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-500 mr-auto">Simpan RAB awal sebagai <b>baseline</b> untuk melacak deviasi setelah negosiasi.</span>
+              <Button data-testid="btn-save-baseline" size="sm" variant="outline" onClick={saveBaseline} disabled={busy || !(data.items || []).length} className="h-8 gap-1.5 text-xs border-indigo-300 text-indigo-700 hover:bg-indigo-50"><Flag className="w-3.5 h-3.5" /> Simpan Baseline</Button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">Baseline · {fmtDate(data.rabBaseline.savedAt)}</span>
+              <div className="text-xs text-slate-600">
+                {rupiahShort(data.rabBaseline.totalItemValue)} → <b className="font-mono">{rupiahShort(data.totalItemValue)}</b>
+                {(() => { const dv = (data.totalItemValue || 0) - (data.rabBaseline.totalItemValue || 0); const pct = data.rabBaseline.totalItemValue ? (dv / data.rabBaseline.totalItemValue * 100) : 0; return <span data-testid="baseline-deviation" className={`ml-1 font-mono font-semibold ${dv > 0 ? "text-red-600" : dv < 0 ? "text-green-600" : "text-slate-500"}`}>({dv >= 0 ? "+" : ""}{rupiahShort(dv)} · {dv >= 0 ? "+" : ""}{pct.toFixed(1)}%)</span>; })()}
+              </div>
+              <div className="ml-auto flex items-center gap-1.5">
+                <Button data-testid="btn-view-comparison" size="sm" variant="outline" onClick={() => setCompareOpen(true)} className="h-8 gap-1.5 text-xs"><GitCompare className="w-3.5 h-3.5" /> Rincian Deviasi</Button>
+                <Button data-testid="btn-update-baseline" size="sm" variant="ghost" onClick={saveBaseline} disabled={busy} className="h-8 gap-1.5 text-xs text-slate-500">Perbarui</Button>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -490,6 +543,55 @@ export function ProgressTab({ project }) {
           </div>
         </DialogContent>
       </Dialog>
+      {/* Baseline vs Revisi comparison dialog */}
+      <Dialog open={compareOpen} onOpenChange={setCompareOpen}>
+        <DialogContent className="bg-white max-w-2xl">
+          <DialogHeader><DialogTitle className="font-display text-lg flex items-center gap-2"><GitCompare className="w-5 h-5 text-indigo-600" /> Baseline vs Revisi RAB</DialogTitle></DialogHeader>
+          {data?.rabBaseline && (() => {
+            const rows = buildComparison();
+            const bTot = data.rabBaseline.totalItemValue || 0, cTot = data.totalItemValue || 0, dTot = cTot - bTot;
+            return (
+              <div className="space-y-3">
+                <p className="text-[11px] text-slate-500">Baseline disimpan {fmtDate(data.rabBaseline.savedAt)}. Perbandingan nilai tiap item pekerjaan terhadap RAB awal.</p>
+                <div className="max-h-[55vh] overflow-auto rounded-lg border border-slate-200">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-slate-500 text-xs sticky top-0"><tr>
+                      <th className="text-left font-medium px-3 py-2">Item Pekerjaan</th>
+                      <th className="text-right font-medium px-3 py-2">Baseline</th>
+                      <th className="text-right font-medium px-3 py-2">Revisi</th>
+                      <th className="text-right font-medium px-3 py-2">Selisih</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {rows.map((r, i) => (
+                        <tr key={i} data-testid={`comparison-row-${i}`}>
+                          <td className="px-3 py-2">{r.name}
+                            {r.status === "new" && <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 align-middle">BARU</span>}
+                            {r.status === "removed" && <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 align-middle">DIHAPUS</span>}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-500">{r.baselineValue ? rupiahShort(r.baselineValue) : "—"}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-800">{r.currentValue ? rupiahShort(r.currentValue) : "—"}</td>
+                          <td className={`px-3 py-2 text-right font-mono ${r.delta > 0 ? "text-red-600" : r.delta < 0 ? "text-green-600" : "text-slate-400"}`}>{r.delta === 0 ? "—" : `${r.delta > 0 ? "+" : ""}${rupiahShort(r.delta)}`}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-slate-50 font-semibold sticky bottom-0"><tr>
+                      <td className="px-3 py-2">Total RAB</td>
+                      <td className="px-3 py-2 text-right font-mono text-slate-600">{rupiahShort(bTot)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-slate-900">{rupiahShort(cTot)}</td>
+                      <td className={`px-3 py-2 text-right font-mono ${dTot > 0 ? "text-red-600" : dTot < 0 ? "text-green-600" : "text-slate-500"}`}>{dTot >= 0 ? "+" : ""}{rupiahShort(dTot)}</td>
+                    </tr></tfoot>
+                  </table>
+                </div>
+                <div className="flex justify-between items-center pt-1">
+                  <Button data-testid="btn-delete-baseline" variant="ghost" size="sm" onClick={deleteBaseline} className="gap-1.5 text-red-500 hover:text-red-600 hover:bg-red-50"><Trash2 className="w-4 h-4" /> Hapus Baseline</Button>
+                  <Button data-testid="btn-update-baseline-dialog" size="sm" onClick={saveBaseline} disabled={busy} className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"><Flag className="w-4 h-4" /> Jadikan Baseline Baru</Button>
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       {/* Client portal share dialog */}
       <Dialog open={shareOpen} onOpenChange={setShareOpen}>
         <DialogContent className="bg-white max-w-md">
