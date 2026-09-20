@@ -51,6 +51,7 @@ def user_public(doc: dict) -> dict:
         "subscriptionExpiry": doc.get("subscriptionExpiry"),
         "authProvider": doc.get("authProvider", "email"),
         "isDemo": bool(doc.get("isDemo", False)),
+        "isAdmin": (doc.get("email", "") or "").strip().lower() in OWNER_EMAILS,
     }
 
 

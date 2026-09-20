@@ -539,6 +539,58 @@ async def list_orders(user: dict = Depends(get_current_user)):
     return orders
 
 
+# ---------- Admin settings ----------
+SETTINGS_ID = "app_settings"
+DEFAULT_SETTINGS = {
+    "appName": "ProFinance Interior",
+    "supportEmail": "",
+    "supportWhatsapp": "",
+    "announcement": "",
+    "maintenanceMode": False,
+}
+
+
+class SettingsIn(BaseModel):
+    appName: Optional[str] = None
+    supportEmail: Optional[str] = None
+    supportWhatsapp: Optional[str] = None
+    announcement: Optional[str] = None
+    maintenanceMode: Optional[bool] = None
+
+
+async def require_admin(user: dict = Depends(get_current_user)):
+    if (user.get("email") or "").strip().lower() not in OWNER_EMAILS:
+        raise HTTPException(status_code=403, detail="Akses khusus admin")
+    return user
+
+
+async def _get_settings() -> dict:
+    doc = await db.settings.find_one({"id": SETTINGS_ID}, {"_id": 0})
+    if not doc:
+        doc = {"id": SETTINGS_ID, **DEFAULT_SETTINGS}
+        await db.settings.insert_one(dict(doc))
+    return {**DEFAULT_SETTINGS, **{k: v for k, v in doc.items() if k in DEFAULT_SETTINGS}}
+
+
+@api.get("/admin/settings")
+async def get_admin_settings(user: dict = Depends(require_admin)):
+    return await _get_settings()
+
+
+@api.put("/admin/settings")
+async def update_admin_settings(body: SettingsIn, user: dict = Depends(require_admin)):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await db.settings.update_one({"id": SETTINGS_ID}, {"$set": updates}, upsert=True)
+    return await _get_settings()
+
+
+@api.get("/settings/public")
+async def public_settings():
+    s = await _get_settings()
+    return {k: s[k] for k in ("appName", "announcement", "maintenanceMode", "supportWhatsapp", "supportEmail")}
+
+
 @api.get("/notifications")
 async def list_notifications(user: dict = Depends(get_current_user)):
     notifs = await db.notifications.find(

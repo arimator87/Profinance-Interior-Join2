@@ -67,9 +67,10 @@ export function AuthProvider({ children }) {
 
   const isPremium = user?.subscriptionTier === "premium";
   const isDemo = !!user?.isDemo;
+  const isAdmin = !!user?.isAdmin;
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, loginDemo, register, logout, refreshUser, setUserData, isPremium, isDemo, checkAuth }}>
+    <AuthContext.Provider value={{ user, loading, login, loginDemo, register, logout, refreshUser, setUserData, isPremium, isDemo, isAdmin, checkAuth }}>
       {children}
     </AuthContext.Provider>
   );
