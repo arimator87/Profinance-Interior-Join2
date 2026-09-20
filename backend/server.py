@@ -518,28 +518,6 @@ async def get_order(order_id: str, user: dict = Depends(get_current_user)):
 
 
 # ---------- Subscription (mockup) ----------
-@api.post("/subscription/upgrade")
-async def upgrade(plan: dict, user: dict = Depends(get_current_user)):
-    months = 12 if plan.get("plan") == "yearly" else 1
-    expiry = (datetime.now(timezone.utc) + timedelta(days=30 * months)).isoformat()
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
-        {"$set": {"subscriptionTier": "premium", "subscriptionExpiry": expiry}},
-    )
-    updated = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
-    return user_public(updated)
-
-
-@api.post("/subscription/toggle")
-async def toggle_tier(user: dict = Depends(get_current_user)):
-    new_tier = "free" if user.get("subscriptionTier") == "premium" else "premium"
-    expiry = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat() if new_tier == "premium" else None
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
-        {"$set": {"subscriptionTier": new_tier, "subscriptionExpiry": expiry}},
-    )
-    updated = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
-    return user_public(updated)
 
 
 # ---------- Projects ----------

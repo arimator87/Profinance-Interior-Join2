@@ -5,26 +5,15 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, RefreshCw, PlayCircle } from "lucide-react";
+import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, PlayCircle } from "lucide-react";
 import { toast } from "sonner";
 
 export function Header() {
-  const { user, logout, isPremium, isDemo, refreshUser } = useAuth();
+  const { user, logout, isPremium, isDemo } = useAuth();
   const navigate = useNavigate();
 
   const initials = (user?.name || user?.email || "U")
     .split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
-
-  const toggleTier = async () => {
-    try {
-      const { api } = await import("@/lib/api");
-      await api.post("/subscription/toggle");
-      const u = await refreshUser();
-      toast.success(u.subscriptionTier === "premium" ? "Mode Premium aktif (demo)" : "Kembali ke mode Free");
-    } catch {
-      toast.error("Gagal mengubah mode");
-    }
-  };
 
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur-xl">
@@ -93,11 +82,6 @@ export function Header() {
               <DropdownMenuItem data-testid="menu-pricing" onClick={() => navigate("/pricing")}>
                 <Crown className="w-4 h-4 mr-2" /> Paket & Upgrade
               </DropdownMenuItem>
-              {!isDemo && (
-                <DropdownMenuItem data-testid="menu-toggle-tier" onClick={toggleTier}>
-                  <RefreshCw className="w-4 h-4 mr-2" /> Toggle Free/Premium (demo)
-                </DropdownMenuItem>
-              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem data-testid="menu-logout" onClick={async () => { await logout(); navigate("/login"); }} className="text-red-600 focus:text-red-600">
                 <LogOut className="w-4 h-4 mr-2" /> Keluar

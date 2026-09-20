@@ -11,6 +11,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 logger = logging.getLogger(__name__)
 
+OWNER_EMAILS = {"furniture.mail@gmail.com", "furnitrue.mail@gmail.com"}
+
 mongo_url = os.environ["MONGO_URL"]
 _client = AsyncIOMotorClient(mongo_url)
 db = _client[os.environ["DB_NAME"]]
@@ -164,6 +166,15 @@ async def get_current_user(request: Request) -> dict:
             status_code=403,
             detail="Mode Demo: data tidak dapat diubah. Daftar akun gratis untuk mulai mengelola proyek Anda.",
         )
+    email = (user.get("email") or "").strip().lower()
+    if email in OWNER_EMAILS and user.get("subscriptionTier") != "premium":
+        expiry = (datetime.now(timezone.utc) + timedelta(days=3650)).isoformat()
+        await db.users.update_one(
+            {"user_id": user["user_id"]},
+            {"$set": {"subscriptionTier": "premium", "subscriptionExpiry": expiry}},
+        )
+        user["subscriptionTier"] = "premium"
+        user["subscriptionExpiry"] = expiry
     return user
 
 
