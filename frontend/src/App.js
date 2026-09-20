@@ -8,6 +8,7 @@ import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import ProjectDetail from "@/pages/ProjectDetail";
 import Pricing from "@/pages/Pricing";
+import Account from "@/pages/Account";
 import ClientPortal from "@/pages/ClientPortal";
 
 function ProtectedRoute({ children }) {
@@ -36,6 +37,7 @@ function AppRoutes() {
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/project/:id" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>} />
       <Route path="/pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
+      <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

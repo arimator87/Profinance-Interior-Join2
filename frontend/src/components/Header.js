@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -5,12 +6,19 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, PlayCircle } from "lucide-react";
+import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, PlayCircle, Receipt, BellRing } from "lucide-react";
 import { toast } from "sonner";
 
 export function Header() {
   const { user, logout, isPremium, isDemo } = useAuth();
   const navigate = useNavigate();
+
+  const expiry = user?.subscriptionExpiry ? new Date(user.subscriptionExpiry) : null;
+  const daysLeft = expiry ? Math.ceil((expiry - new Date()) / 86400000) : null;
+  const dismissKey = expiry ? `pf_renew_dismiss_${user?.user_id}_${expiry.toISOString().slice(0, 10)}` : null;
+  const [renewDismissed, setRenewDismissed] = useState(() => (dismissKey ? localStorage.getItem(dismissKey) === "1" : false));
+  const showRenew = isPremium && !isDemo && daysLeft != null && daysLeft <= 7 && !renewDismissed;
+  const dismissRenew = () => { if (dismissKey) localStorage.setItem(dismissKey, "1"); setRenewDismissed(true); };
 
   const initials = (user?.name || user?.email || "U")
     .split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
@@ -22,6 +30,16 @@ export function Header() {
           <span className="font-semibold">Mode Demo (baca-saja)</span> — Anda menjelajah dengan data contoh.{" "}
           <button data-testid="demo-register-btn" onClick={async () => { await logout(); navigate("/login"); }} className="underline font-semibold hover:text-blue-100">Daftar gratis</button>{" "}
           untuk mengelola proyek Anda.
+        </div>
+      )}
+      {showRenew && (
+        <div data-testid="renewal-banner" className="bg-amber-500 text-white text-xs sm:text-sm px-4 py-2 flex items-center justify-center gap-2 flex-wrap">
+          <BellRing className="w-4 h-4 shrink-0" />
+          <span>
+            {daysLeft < 0 ? "Premium Anda telah berakhir." : `Premium Anda berakhir dalam ${daysLeft} hari.`}{" "}
+            <button data-testid="renewal-cta" onClick={() => navigate("/pricing")} className="underline font-semibold hover:text-amber-100">Perpanjang sekarang</button>
+          </span>
+          <button data-testid="renewal-dismiss" onClick={dismissRenew} className="ml-2 text-white/80 hover:text-white font-semibold">✕</button>
         </div>
       )}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
@@ -78,6 +96,9 @@ export function Header() {
               <DropdownMenuSeparator />
               <DropdownMenuItem data-testid="menu-dashboard" onClick={() => navigate("/dashboard")}>
                 <LayoutDashboard className="w-4 h-4 mr-2" /> Dashboard
+              </DropdownMenuItem>
+              <DropdownMenuItem data-testid="menu-account" onClick={() => navigate("/account")}>
+                <Receipt className="w-4 h-4 mr-2" /> Akun & Transaksi
               </DropdownMenuItem>
               <DropdownMenuItem data-testid="menu-pricing" onClick={() => navigate("/pricing")}>
                 <Crown className="w-4 h-4 mr-2" /> Paket & Upgrade

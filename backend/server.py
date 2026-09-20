@@ -32,7 +32,7 @@ load_dotenv(ROOT_DIR / ".env")
 import auth as auth_mod
 from auth import (
     db, get_current_user, require_premium, create_session, set_session_cookie,
-    register_email_user, login_email_user, process_google_session, user_public,
+    register_email_user, login_email_user, process_google_session, user_public, OWNER_EMAILS,
 )
 from storage import init_storage, put_object, get_object, APP_NAME, MIME_TYPES
 from pdf_report import build_report_pdf, build_progress_pdf
@@ -515,6 +515,79 @@ async def get_order(order_id: str, user: dict = Depends(get_current_user)):
     if not order:
         raise HTTPException(status_code=404, detail="Order tidak ditemukan")
     return {"order_id": order_id, "status": order["status"], "plan": order.get("plan"), "premium_until": order.get("premium_until")}
+
+
+@api.get("/subscription/orders")
+async def list_orders(user: dict = Depends(get_current_user)):
+    orders = await db.orders.find(
+        {"user_id": user["user_id"]}, {"_id": 0, "snap_token": 0, "last_notification": 0, "redirect_url": 0}
+    ).sort("created_at", -1).to_list(500)
+    return orders
+
+
+@api.get("/notifications")
+async def list_notifications(user: dict = Depends(get_current_user)):
+    notifs = await db.notifications.find(
+        {"user_id": user["user_id"]}, {"_id": 0}
+    ).sort("createdAt", -1).to_list(100)
+    return notifs
+
+
+@api.post("/notifications/{notif_id}/read")
+async def mark_notification_read(notif_id: str, user: dict = Depends(get_current_user)):
+    await db.notifications.update_one({"id": notif_id, "user_id": user["user_id"]}, {"$set": {"read": True}})
+    return {"ok": True}
+
+
+async def _renewal_reminders_job():
+    now = datetime.now(timezone.utc)
+    soon = now + timedelta(days=7)
+    users = await db.users.find({"subscriptionTier": "premium"}, {"_id": 0}).to_list(10000)
+    created = 0
+    for u in users:
+        if u.get("email", "").strip().lower() in OWNER_EMAILS or u.get("isDemo"):
+            continue
+        exp_raw = u.get("subscriptionExpiry")
+        if not exp_raw:
+            continue
+        try:
+            exp = datetime.fromisoformat(exp_raw)
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        if exp > soon:
+            continue  # not near expiry yet
+        days_left = (exp - now).days
+        expiry_key = exp.date().isoformat()
+        exists = await db.notifications.find_one({"user_id": u["user_id"], "type": "renewal", "expiryKey": expiry_key})
+        if exists:
+            continue
+        if days_left < 0:
+            title = "Premium Anda telah berakhir"
+            body = "Perpanjang sekarang untuk kembali mengakses Progress, Portal Klien, dan Laporan PDF."
+        else:
+            title = f"Premium berakhir dalam {days_left} hari"
+            body = "Perpanjang langganan agar akses Premium Anda tidak terputus."
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()), "user_id": u["user_id"], "type": "renewal",
+            "title": title, "body": body, "daysLeft": days_left, "expiryKey": expiry_key,
+            "read": False, "createdAt": now_iso(),
+        })
+        created += 1
+    logger.info("Renewal reminders created: %s", created)
+
+
+@api.post("/cron/renewal-reminders")
+async def cron_renewal_reminders(request: Request, background: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET")
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    if not secret or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background.add_task(_renewal_reminders_job)
+    return {"ok": True, "queued": True}
 
 
 # ---------- Subscription (mockup) ----------

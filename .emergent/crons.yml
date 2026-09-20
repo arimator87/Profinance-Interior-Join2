@@ -6,3 +6,10 @@ crons:
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
+  - name: renewal-reminders
+    description: "Create in-app renewal reminders for Premium users whose subscription expires within 7 days"
+    cron: "0 1 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/renewal-reminders"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
