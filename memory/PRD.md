@@ -57,6 +57,9 @@ users, user_sessions, projects, transactions, workers, work_items, progress_entr
 ## Status
 Verified by testing agent: backend 20/20, frontend all tested flows pass. Payment is MOCKED.
 
+## Implemented (2026-09-20)
+- Manajemen Pengguna (Admin): halaman `/admin/users` (AdminUsers.js, menu Header "Manajemen Pengguna", admin-only). Backend: `GET /api/admin/users` (pencarian nama/email/phone + pagination; per-user: status Free/Premium/Kedaluwarsa, s/d expiry + sisa hari, isDemo, isOwner, projectCount, transactionCount via project_ids, lastLogin dari user_sessions, created_at), `POST /api/admin/users/{id}/premium` {days: 0=permanen, 30/90/365; extend dari max(now, expiry)} dengan notifikasi in-app ke user, `POST /api/admin/users/{id}/revoke` (owner diblok 400, set free + notifikasi). UI: tabel badge status, dialog pilih durasi, AlertDialog konfirmasi cabut, pagination prev/next. Terverifikasi curl: list/search ok, grant 30d + extend 90d menumpuk benar, revoke ok, revoke owner→400, non-admin→403. Screenshot desktop/mobile ok.
+
 ## Backlog / Next (P1/P2)
 - P1: Batch summary via Mongo $group (avoid N+1) for many projects
 - P1: Unique tukang name per project (or use worker_id in tx category) to avoid name collisions

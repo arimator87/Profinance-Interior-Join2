@@ -591,6 +591,134 @@ async def public_settings():
     return {k: s[k] for k in ("appName", "announcement", "maintenanceMode", "supportWhatsapp", "supportEmail")}
 
 
+# ---------- Admin: manajemen pengguna ----------
+class GrantPremiumIn(BaseModel):
+    days: int = 30  # 0 = permanen
+
+
+def _sub_status(u: dict, now: datetime) -> tuple[str, Optional[int]]:
+    tier = u.get("subscriptionTier", "free")
+    if tier != "premium":
+        return "free", None
+    exp_raw = u.get("subscriptionExpiry")
+    exp = None
+    if exp_raw:
+        try:
+            exp = datetime.fromisoformat(exp_raw)
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+        except Exception:
+            exp = None
+    if exp and exp < now:
+        return "expired", None
+    days_left = (exp - now).days if exp else None
+    return "premium", days_left
+
+
+@api.get("/admin/users")
+async def admin_list_users(q: str = "", page: int = 1, limit: int = 15, user: dict = Depends(require_admin)):
+    query = {}
+    if q.strip():
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        query = {"$or": [{"name": rx}, {"email": rx}, {"phone": rx}]}
+    page = max(1, page)
+    limit = min(max(1, limit), 50)
+    total = await db.users.count_documents(query)
+    users = (
+        await db.users.find(query, {"_id": 0, "password_hash": 0})
+        .sort("created_at", -1)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .to_list(limit)
+    )
+    now = datetime.now(timezone.utc)
+    items = []
+    for u in users:
+        uid = u["user_id"]
+        project_ids = [p["id"] for p in await db.projects.find({"user_id": uid}, {"_id": 0, "id": 1}).to_list(1000)]
+        tx_count = (
+            await db.transactions.count_documents({"project_id": {"$in": project_ids}}) if project_ids else 0
+        )
+        last_session = await db.user_sessions.find_one(
+            {"user_id": uid}, {"_id": 0, "created_at": 1}, sort=[("created_at", -1)]
+        )
+        status, days_left = _sub_status(u, now)
+        items.append({
+            "user_id": uid,
+            "name": u.get("name", ""),
+            "email": u.get("email", ""),
+            "phone": u.get("phone", ""),
+            "authProvider": u.get("authProvider", "email"),
+            "subscriptionTier": u.get("subscriptionTier", "free"),
+            "subscriptionExpiry": u.get("subscriptionExpiry"),
+            "status": status,
+            "daysLeft": days_left,
+            "isDemo": bool(u.get("isDemo", False)),
+            "isOwner": (u.get("email", "") or "").strip().lower() in OWNER_EMAILS,
+            "created_at": u.get("created_at"),
+            "lastLogin": (last_session or {}).get("created_at"),
+            "projectCount": len(project_ids),
+            "transactionCount": tx_count,
+        })
+    pages = max(1, -(-total // limit))
+    return {"items": items, "total": total, "page": page, "pages": pages}
+
+
+@api.post("/admin/users/{target_user_id}/premium")
+async def admin_grant_premium(target_user_id: str, body: GrantPremiumIn, user: dict = Depends(require_admin)):
+    target = await db.users.find_one({"user_id": target_user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan")
+    now = datetime.now(timezone.utc)
+    if body.days <= 0:
+        expiry = now + timedelta(days=3650)  # permanen
+    else:
+        base = now
+        status, _ = _sub_status(target, now)
+        if status == "premium" and target.get("subscriptionExpiry"):
+            try:
+                cur = datetime.fromisoformat(target["subscriptionExpiry"])
+                if cur.tzinfo is None:
+                    cur = cur.replace(tzinfo=timezone.utc)
+                base = max(now, cur)
+            except Exception:
+                pass
+        expiry = base + timedelta(days=body.days)
+    await db.users.update_one(
+        {"user_id": target_user_id},
+        {"$set": {"subscriptionTier": "premium", "subscriptionExpiry": expiry.isoformat()}},
+    )
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()), "user_id": target_user_id, "type": "admin",
+        "title": "Akses Premium diaktifkan admin",
+        "body": "Selamat! Akun Anda kini Premium." + ("" if body.days <= 0 else f" Berlaku hingga {expiry.date().isoformat()}."),
+        "read": False, "createdAt": now_iso(),
+    })
+    logger.info("Admin %s granted premium (%s days) to %s", user.get("email"), body.days, target.get("email"))
+    return {"ok": True, "subscriptionExpiry": expiry.isoformat()}
+
+
+@api.post("/admin/users/{target_user_id}/revoke")
+async def admin_revoke_premium(target_user_id: str, user: dict = Depends(require_admin)):
+    target = await db.users.find_one({"user_id": target_user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan")
+    if (target.get("email", "") or "").strip().lower() in OWNER_EMAILS:
+        raise HTTPException(status_code=400, detail="Akun owner tidak dapat dicabut Premium-nya")
+    await db.users.update_one(
+        {"user_id": target_user_id},
+        {"$set": {"subscriptionTier": "free", "subscriptionExpiry": None}},
+    )
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()), "user_id": target_user_id, "type": "admin",
+        "title": "Akses Premium berakhir",
+        "body": "Status langganan Anda dikembalikan ke Free oleh admin.",
+        "read": False, "createdAt": now_iso(),
+    })
+    logger.info("Admin %s revoked premium from %s", user.get("email"), target.get("email"))
+    return {"ok": True}
+
+
 @api.get("/notifications")
 async def list_notifications(user: dict = Depends(get_current_user)):
     notifs = await db.notifications.find(

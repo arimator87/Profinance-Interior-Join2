@@ -6,7 +6,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, PlayCircle, Receipt, BellRing, Settings } from "lucide-react";
+import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, PlayCircle, Receipt, BellRing, Settings, Users } from "lucide-react";
 import { toast } from "sonner";
 
 export function Header() {
@@ -104,9 +104,14 @@ export function Header() {
                 <Crown className="w-4 h-4 mr-2" /> Paket & Upgrade
               </DropdownMenuItem>
               {isAdmin && (
-                <DropdownMenuItem data-testid="menu-admin-settings" onClick={() => navigate("/admin/settings")}>
-                  <Settings className="w-4 h-4 mr-2" /> Pengaturan Admin
-                </DropdownMenuItem>
+                <>
+                  <DropdownMenuItem data-testid="menu-admin-settings" onClick={() => navigate("/admin/settings")}>
+                    <Settings className="w-4 h-4 mr-2" /> Pengaturan Admin
+                  </DropdownMenuItem>
+                  <DropdownMenuItem data-testid="menu-admin-users" onClick={() => navigate("/admin/users")}>
+                    <Users className="w-4 h-4 mr-2" /> Manajemen Pengguna
+                  </DropdownMenuItem>
+                </>
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem data-testid="menu-logout" onClick={async () => { await logout(); navigate("/login"); }} className="text-red-600 focus:text-red-600">
