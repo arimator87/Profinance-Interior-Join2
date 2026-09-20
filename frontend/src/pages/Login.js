@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Ruler, Loader2, Check, Sparkles, PlayCircle } from "lucide-react";
+import { Ruler, Loader2, Check, Sparkles, PlayCircle, Eye, EyeOff, Phone, Mail, Lock } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Login() {
@@ -16,6 +16,12 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [demoBusy, setDemoBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [resetPhone, setResetPhone] = useState("");
+  const [resetNew, setResetNew] = useState("");
+  const [showResetNew, setShowResetNew] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
 
   useEffect(() => {
     if (user) navigate("/dashboard", { replace: true });
@@ -47,7 +53,7 @@ export default function Login() {
       if (mode === "login") {
         await login(email, password);
       } else {
-        await register(email, name, password);
+        await register(email, name, password, phone);
       }
       toast.success("Berhasil masuk");
       navigate("/dashboard", { replace: true });
@@ -55,6 +61,24 @@ export default function Login() {
       toast.error(err?.response?.data?.detail || "Gagal, coba lagi");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const submitReset = async (e) => {
+    e.preventDefault();
+    setResetBusy(true);
+    try {
+      const { api } = await import("@/lib/api");
+      const res = await api.post("/auth/reset-password", { email, phone: resetPhone, newPassword: resetNew });
+      toast.success(res.data?.message || "Password diperbarui");
+      setMode("login");
+      setPassword("");
+      setResetNew("");
+      setResetPhone("");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Gagal memperbarui password");
+    } finally {
+      setResetBusy(false);
     }
   };
 
@@ -121,78 +145,148 @@ export default function Login() {
           </div>
 
           <h2 className="font-display text-2xl font-bold text-slate-900">
-            {mode === "login" ? "Masuk ke akun Anda" : "Buat akun baru"}
+            {mode === "login" ? "Masuk ke akun Anda" : mode === "register" ? "Buat akun baru" : "Atur ulang password"}
           </h2>
           <p className="text-slate-500 text-sm mt-1">
-            {mode === "login" ? "Selamat datang kembali!" : "Gratis selamanya, upgrade kapan saja."}
+            {mode === "login" ? "Selamat datang kembali!" : mode === "register" ? "Gratis selamanya, upgrade kapan saja." : "Verifikasi identitas Anda dengan nomor telepon yang terdaftar."}
           </p>
 
-          <Button
-            data-testid="login-google-button"
-            onClick={googleLogin}
-            variant="outline"
-            className="w-full mt-6 gap-2 border-slate-300 bg-white hover:bg-slate-50 h-11"
-          >
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="w-5 h-5" />
-            Masuk dengan Google
-          </Button>
-
-          <div className="flex items-center gap-3 my-5">
-            <div className="h-px flex-1 bg-slate-200" />
-            <span className="text-xs text-slate-400">atau email</span>
-            <div className="h-px flex-1 bg-slate-200" />
-          </div>
-
-          <form onSubmit={submit} className="space-y-3.5">
-            {mode === "register" && (
+          {mode === "reset" ? (
+            <form onSubmit={submitReset} className="mt-6 space-y-3.5" data-testid="reset-form">
               <div>
-                <Label className="text-slate-700">Nama Lengkap</Label>
-                <Input data-testid="register-name-input" value={name} onChange={(e) => setName(e.target.value)}
-                  placeholder="Budi Kontraktor" required className="mt-1 h-11 bg-white" />
+                <Label className="text-slate-700">Email</Label>
+                <div className="relative mt-1">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input data-testid="reset-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                    placeholder="nama@email.com" required className="h-11 bg-white pl-10" />
+                </div>
               </div>
-            )}
-            <div>
-              <Label className="text-slate-700">Email</Label>
-              <Input data-testid="login-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-                placeholder="nama@email.com" required className="mt-1 h-11 bg-white" />
-            </div>
-            <div>
-              <Label className="text-slate-700">Password</Label>
-              <Input data-testid="login-password-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-                placeholder="Minimal 6 karakter" required className="mt-1 h-11 bg-white" />
-            </div>
-            <Button data-testid="login-submit-button" type="submit" disabled={busy}
-              className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white font-semibold">
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === "login" ? "Masuk" : "Daftar Sekarang"}
-            </Button>
-          </form>
+              <div>
+                <Label className="text-slate-700">Nomor Telepon (saat daftar)</Label>
+                <div className="relative mt-1">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input data-testid="reset-phone-input" inputMode="tel" value={resetPhone} onChange={(e) => setResetPhone(e.target.value)}
+                    placeholder="08xxxxxxxxxx" required className="h-11 bg-white pl-10" />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">Kami memakai nomor ini untuk memastikan Anda pemilik akun.</p>
+              </div>
+              <div>
+                <Label className="text-slate-700">Password Baru</Label>
+                <div className="relative mt-1">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input data-testid="reset-newpassword-input" type={showResetNew ? "text" : "password"} value={resetNew} onChange={(e) => setResetNew(e.target.value)}
+                    placeholder="Minimal 6 karakter" required className="h-11 bg-white pl-10 pr-11" />
+                  <button type="button" data-testid="reset-toggle-password" onClick={() => setShowResetNew((s) => !s)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" aria-label="tampilkan password">
+                    {showResetNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              <Button data-testid="reset-submit-button" type="submit" disabled={resetBusy}
+                className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-semibold">
+                {resetBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Perbarui Password"}
+              </Button>
+              <p className="text-sm text-slate-500 text-center">
+                <button type="button" data-testid="reset-back-login" onClick={() => setMode("login")} className="text-amber-600 font-semibold hover:underline">
+                  ← Kembali ke Masuk
+                </button>
+              </p>
+            </form>
+          ) : (
+            <>
+              <Button
+                data-testid="login-google-button"
+                onClick={googleLogin}
+                variant="outline"
+                className="w-full mt-6 gap-2 border-slate-300 bg-white hover:bg-slate-50 h-11"
+              >
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="w-5 h-5" />
+                Masuk dengan Google
+              </Button>
 
-          <p className="text-sm text-slate-500 mt-5 text-center">
-            {mode === "login" ? "Belum punya akun? " : "Sudah punya akun? "}
-            <button data-testid="toggle-auth-mode" onClick={() => setMode(mode === "login" ? "register" : "login")}
-              className="text-amber-600 font-semibold hover:underline">
-              {mode === "login" ? "Daftar" : "Masuk"}
-            </button>
-          </p>
+              <div className="flex items-center gap-3 my-5">
+                <div className="h-px flex-1 bg-slate-200" />
+                <span className="text-xs text-slate-400">atau email</span>
+                <div className="h-px flex-1 bg-slate-200" />
+              </div>
 
-          <div className="flex items-center gap-3 my-5">
-            <div className="h-px flex-1 bg-slate-200" />
-            <span className="text-xs text-slate-400">atau coba dulu</span>
-            <div className="h-px flex-1 bg-slate-200" />
-          </div>
-          <Button
-            data-testid="login-demo-button"
-            onClick={tryDemo}
-            disabled={demoBusy}
-            variant="outline"
-            className="w-full h-11 gap-2 border-slate-900 text-slate-900 hover:bg-slate-900 hover:text-white transition-colors"
-          >
-            {demoBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
-            Jelajahi Akun Demo
-          </Button>
-          <p className="text-[11px] text-slate-400 mt-2 text-center">
-            Rasakan semua fitur Premium dengan data contoh — <b>mode baca-saja</b>, tanpa perlu daftar.
-          </p>
+              <form onSubmit={submit} className="space-y-3.5">
+                {mode === "register" && (
+                  <div>
+                    <Label className="text-slate-700">Nama Lengkap</Label>
+                    <Input data-testid="register-name-input" value={name} onChange={(e) => setName(e.target.value)}
+                      placeholder="Budi Kontraktor" required className="mt-1 h-11 bg-white" />
+                  </div>
+                )}
+                <div>
+                  <Label className="text-slate-700">Email</Label>
+                  <Input data-testid="login-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                    placeholder="nama@email.com" required className="mt-1 h-11 bg-white" />
+                </div>
+                {mode === "register" && (
+                  <div>
+                    <Label className="text-slate-700">Nomor Telepon <span className="text-slate-400 font-normal">(opsional)</span></Label>
+                    <div className="relative mt-1">
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <Input data-testid="register-phone-input" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
+                        placeholder="08xxxxxxxxxx" className="h-11 bg-white pl-10" />
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">Membantu pemulihan akun jika Anda lupa email/password.</p>
+                  </div>
+                )}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-slate-700">Password</Label>
+                    {mode === "login" && (
+                      <button type="button" data-testid="forgot-password-link" onClick={() => setMode("reset")}
+                        className="text-xs text-amber-600 font-medium hover:underline">
+                        Lupa password?
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative mt-1">
+                    <Input data-testid="login-password-input" type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Minimal 6 karakter" required className="h-11 bg-white pr-11" />
+                    <button type="button" data-testid="toggle-password-visibility" onClick={() => setShowPassword((s) => !s)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" aria-label="tampilkan password">
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <Button data-testid="login-submit-button" type="submit" disabled={busy}
+                  className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white font-semibold">
+                  {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === "login" ? "Masuk" : "Daftar Sekarang"}
+                </Button>
+              </form>
+
+              <p className="text-sm text-slate-500 mt-5 text-center">
+                {mode === "login" ? "Belum punya akun? " : "Sudah punya akun? "}
+                <button data-testid="toggle-auth-mode" onClick={() => setMode(mode === "login" ? "register" : "login")}
+                  className="text-amber-600 font-semibold hover:underline">
+                  {mode === "login" ? "Daftar" : "Masuk"}
+                </button>
+              </p>
+
+              <div className="flex items-center gap-3 my-5">
+                <div className="h-px flex-1 bg-slate-200" />
+                <span className="text-xs text-slate-400">atau coba dulu</span>
+                <div className="h-px flex-1 bg-slate-200" />
+              </div>
+              <Button
+                data-testid="login-demo-button"
+                onClick={tryDemo}
+                disabled={demoBusy}
+                variant="outline"
+                className="w-full h-11 gap-2 border-slate-900 text-slate-900 hover:bg-slate-900 hover:text-white transition-colors"
+              >
+                {demoBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
+                Jelajahi Akun Demo
+              </Button>
+              <p className="text-[11px] text-slate-400 mt-2 text-center">
+                Rasakan semua fitur Premium dengan data contoh — <b>mode baca-saja</b>, tanpa perlu daftar.
+              </p>
+            </>
+          )}
 
           {/* Feature info for tablet & mobile (desktop has the showcase panel) */}
           <div className="lg:hidden mt-8 rounded-2xl border border-slate-200 bg-white p-5">

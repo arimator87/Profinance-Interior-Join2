@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 
 OWNER_EMAILS = {"furniture.mail@gmail.com", "furnitrue.mail@gmail.com"}
 
+
+def normalize_phone(phone: str) -> str:
+    if not phone:
+        return ""
+    digits = "".join(ch for ch in str(phone) if ch.isdigit())
+    if digits.startswith("62"):
+        digits = "0" + digits[2:]
+    return digits
+
 mongo_url = os.environ["MONGO_URL"]
 _client = AsyncIOMotorClient(mongo_url)
 db = _client[os.environ["DB_NAME"]]
@@ -36,6 +45,7 @@ def user_public(doc: dict) -> dict:
         "user_id": doc["user_id"],
         "email": doc["email"],
         "name": doc.get("name", ""),
+        "phone": doc.get("phone", ""),
         "picture": doc.get("picture"),
         "subscriptionTier": doc.get("subscriptionTier", "free"),
         "subscriptionExpiry": doc.get("subscriptionExpiry"),
@@ -64,7 +74,8 @@ def set_session_cookie(response: Response, token: str):
     )
 
 
-async def register_email_user(email: str, name: str, password: str) -> dict:
+async def register_email_user(email: str, name: str, password: str, phone: str = "") -> dict:
+    email = (email or "").strip().lower()
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         raise HTTPException(status_code=400, detail="Email sudah terdaftar")
@@ -73,6 +84,7 @@ async def register_email_user(email: str, name: str, password: str) -> dict:
         "user_id": user_id,
         "email": email,
         "name": name,
+        "phone": normalize_phone(phone),
         "password_hash": hash_password(password),
         "picture": None,
         "subscriptionTier": "free",
@@ -84,6 +96,19 @@ async def register_email_user(email: str, name: str, password: str) -> dict:
     await db.users.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+
+async def reset_password_with_phone(email: str, phone: str, new_password: str) -> None:
+    email = (email or "").strip().lower()
+    generic = HTTPException(status_code=400, detail="Data tidak cocok. Pastikan email dan nomor telepon sesuai saat mendaftar.")
+    if len(new_password or "") < 6:
+        raise HTTPException(status_code=400, detail="Password baru minimal 6 karakter")
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user or not user.get("phone"):
+        raise generic
+    if normalize_phone(phone) != user.get("phone"):
+        raise generic
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"password_hash": hash_password(new_password)}})
 
 
 async def login_email_user(email: str, password: str) -> dict:

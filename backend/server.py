@@ -33,6 +33,7 @@ import auth as auth_mod
 from auth import (
     db, get_current_user, require_premium, create_session, set_session_cookie,
     register_email_user, login_email_user, process_google_session, user_public, OWNER_EMAILS,
+    reset_password_with_phone,
 )
 from storage import init_storage, put_object, get_object, APP_NAME, MIME_TYPES
 from pdf_report import build_report_pdf, build_progress_pdf
@@ -82,6 +83,13 @@ class RegisterIn(BaseModel):
     email: EmailStr
     name: str
     password: str = Field(min_length=6)
+    phone: Optional[str] = ""
+
+
+class ResetPasswordIn(BaseModel):
+    email: EmailStr
+    phone: str
+    newPassword: str = Field(min_length=6)
 
 
 class LoginIn(BaseModel):
@@ -281,10 +289,16 @@ async def get_owned_project(project_id: str, user: dict) -> dict:
 # ---------- Auth routes ----------
 @api.post("/auth/register")
 async def register(body: RegisterIn, response: Response):
-    user = await register_email_user(body.email, body.name, body.password)
+    user = await register_email_user(body.email, body.name, body.password, body.phone or "")
     token = await create_session(user["user_id"])
     set_session_cookie(response, token)
     return {"user": user_public(user), "token": token}
+
+
+@api.post("/auth/reset-password")
+async def reset_password(body: ResetPasswordIn):
+    await reset_password_with_phone(body.email, body.phone, body.newPassword)
+    return {"ok": True, "message": "Password berhasil diperbarui. Silakan masuk dengan password baru."}
 
 
 @api.post("/auth/login")
