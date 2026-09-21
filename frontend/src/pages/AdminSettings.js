@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft, Settings, Loader2, ShieldCheck, Save, Tag } from "lucide-react";
+import { ArrowLeft, Settings, Loader2, ShieldCheck, Save, Tag, Trash2, Image as ImageIcon, Plus, RefreshCw } from "lucide-react";
 import { rupiah } from "@/lib/format";
 import { toast } from "sonner";
 
@@ -37,6 +37,18 @@ const THEME_OPTIONS = [
   { v: "warning", label: "Peringatan", bar: "bg-red-600" },
 ];
 
+const IMG_HINT = "Disarankan: 800 × 600 px (rasio 4:3) · format JPG/PNG/WebP · maks 2 MB";
+
+function getImageDims(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve({ w: img.naturalWidth, h: img.naturalHeight }); };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
 export default function AdminSettings() {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
@@ -58,11 +70,89 @@ export default function AdminSettings() {
       } finally {
         setLoading(false);
       }
+      loadCats();
     })();
   }, [isAdmin, navigate]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setNum = (k, v) => setForm((f) => ({ ...f, [k]: Math.max(0, Math.round(Number(v) || 0)) }));
+
+  // ---- Work categories management ----
+  const [cats, setCats] = useState([]);
+  const [catBusy, setCatBusy] = useState(null);
+  const [newCat, setNewCat] = useState({ name: "", imageUrl: null });
+  const newFileRef = useRef(null);
+  const rowFileRefs = useRef({});
+
+  const loadCats = async () => {
+    try {
+      const { data } = await api.get("/work-categories");
+      setCats(data);
+    } catch { toast.error("Gagal memuat kategori"); }
+  };
+
+  const uploadImage = async (file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const { data } = await api.post("/upload", fd);
+    return data.path;
+  };
+
+  const handleImagePick = async (file, onDone, busyKey) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { toast.error("File harus berupa gambar (JPG/PNG/WebP)"); return; }
+    if (file.size > 2 * 1024 * 1024) { toast.error("Ukuran gambar maksimal 2 MB"); return; }
+    setCatBusy(busyKey);
+    try {
+      const dims = await getImageDims(file);
+      if (dims && (dims.w < 800 || dims.h < 600)) {
+        toast.info(`Resolusi ${dims.w}×${dims.h} px lebih kecil dari saran (800×600 px). Gambar tetap diunggah.`);
+      }
+      const path = await uploadImage(file);
+      onDone(path);
+      toast.success("Gambar terunggah");
+    } catch {
+      toast.error("Gagal mengunggah gambar");
+    } finally {
+      setCatBusy(null);
+    }
+  };
+
+  const saveCat = async (c) => {
+    if (!c.name?.trim()) { toast.error("Nama kategori wajib diisi"); return; }
+    setCatBusy(c.id);
+    try {
+      await api.put(`/admin/work-categories/${c.id}`, { name: c.name.trim(), imageUrl: c.imageUrl || null });
+      toast.success("Kategori disimpan");
+      loadCats();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menyimpan kategori");
+    } finally { setCatBusy(null); }
+  };
+
+  const delCat = async (c) => {
+    setCatBusy(c.id);
+    try {
+      await api.delete(`/admin/work-categories/${c.id}`);
+      toast.success(`Kategori "${c.name}" dihapus`);
+      loadCats();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menghapus kategori");
+    } finally { setCatBusy(null); }
+  };
+
+  const addCat = async () => {
+    if (!newCat.name.trim()) { toast.error("Nama kategori wajib diisi"); return; }
+    setCatBusy("new");
+    try {
+      await api.post("/admin/work-categories", { name: newCat.name.trim(), imageUrl: newCat.imageUrl || null });
+      toast.success("Kategori ditambahkan");
+      setNewCat({ name: "", imageUrl: null });
+      loadCats();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menambah kategori");
+    } finally { setCatBusy(null); }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -206,6 +296,99 @@ export default function AdminSettings() {
                   </div>
                 </div>
                 <p className="text-[11px] text-slate-400">{priceHint(form.yearlyPrice, form.yearlyPromo, form.promoActive)}</p>
+              </div>
+            </Card>
+
+            <Card className="p-6 border-slate-200 bg-white space-y-4" data-testid="work-categories-card">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-amber-600" />
+                <h3 className="font-display font-bold text-slate-900">Kategori Pekerjaan</h3>
+              </div>
+              <p className="text-[11px] text-slate-400 -mt-2">
+                Kategori ini tampil di pilihan Kategori saat membuat/mengedit proyek. Setiap kategori bisa punya gambar.
+              </p>
+
+              <div className="space-y-2.5">
+                {cats.map((c) => (
+                  <div key={c.id} className="flex items-center gap-3 rounded-lg border border-slate-200 p-3" data-testid={`cat-row-${c.id}`}>
+                    <div className="w-16 h-12 rounded-md bg-slate-100 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                      {c.imageUrl ? (
+                        <img src={fileUrl(c.imageUrl)} alt={c.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <ImageIcon className="w-5 h-5 text-slate-300" />
+                      )}
+                    </div>
+                    <Input
+                      value={c.name}
+                      onChange={(e) => setCats((arr) => arr.map((x) => (x.id === c.id ? { ...x, name: e.target.value } : x)))}
+                      className="h-10 bg-white"
+                      data-testid={`cat-name-${c.id}`}
+                    />
+                    <input
+                      type="file" accept="image/*" className="hidden"
+                      ref={(el) => { rowFileRefs.current[c.id] = el; }}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = "";
+                        handleImagePick(f, (path) => setCats((arr) => arr.map((x) => (x.id === c.id ? { ...x, imageUrl: path } : x))), c.id);
+                      }}
+                    />
+                    <Button
+                      size="sm" variant="outline"
+                      onClick={() => rowFileRefs.current[c.id]?.click()}
+                      disabled={catBusy === c.id}
+                      className="shrink-0 gap-1.5 border-slate-300"
+                      data-testid={`cat-image-${c.id}`}
+                    >
+                      {catBusy === c.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                      Gambar
+                    </Button>
+                    <Button size="sm" onClick={() => saveCat(c)} disabled={catBusy === c.id} className="shrink-0 bg-slate-900 hover:bg-slate-800 text-white" data-testid={`cat-save-${c.id}`}>
+                      Simpan
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => delCat(c)} disabled={catBusy === c.id} className="shrink-0 border-red-200 text-red-600 hover:bg-red-50" data-testid={`cat-delete-${c.id}`}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-lg border border-dashed border-slate-300 p-4 space-y-3 bg-slate-50/60">
+                <div className="text-sm font-semibold text-slate-800">Tambah Kategori Baru</div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="w-16 h-12 rounded-md bg-white border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                    {newCat.imageUrl ? (
+                      <img src={fileUrl(newCat.imageUrl)} alt="baru" className="w-full h-full object-cover" />
+                    ) : (
+                      <ImageIcon className="w-5 h-5 text-slate-300" />
+                    )}
+                  </div>
+                  <Input
+                    value={newCat.name}
+                    onChange={(e) => setNewCat((n) => ({ ...n, name: e.target.value }))}
+                    placeholder="mis. Kitchen Set, Kamar Mandi"
+                    className="h-10 bg-white flex-1 min-w-[180px]"
+                    data-testid="new-cat-name"
+                  />
+                  <input
+                    type="file" accept="image/*" className="hidden" ref={newFileRef}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      handleImagePick(f, (path) => setNewCat((n) => ({ ...n, imageUrl: path })), "new");
+                    }}
+                  />
+                  <Button size="sm" variant="outline" onClick={() => newFileRef.current?.click()} disabled={catBusy === "new"} className="gap-1.5 border-slate-300" data-testid="new-cat-image">
+                    {catBusy === "new" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5" />}
+                    Pilih Gambar
+                  </Button>
+                  <Button size="sm" onClick={addCat} disabled={catBusy === "new"} className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white" data-testid="new-cat-add">
+                    <Plus className="w-3.5 h-3.5" /> Tambah
+                  </Button>
+                </div>
+                <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                  <ImageIcon className="w-3 h-3" /> {IMG_HINT}
+                </p>
               </div>
             </Card>
 

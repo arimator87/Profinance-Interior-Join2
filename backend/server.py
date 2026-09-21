@@ -599,6 +599,81 @@ async def _get_settings() -> dict:
     return {**DEFAULT_SETTINGS, **{k: v for k, v in doc.items() if k in DEFAULT_SETTINGS}}
 
 
+# ---------- Work Categories (admin-managed) ----------
+DEFAULT_WORK_CATEGORIES = ["Residensial", "Komersial", "Kantor"]
+
+
+class WorkCategoryIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50)
+    imageUrl: Optional[str] = None
+
+
+async def _seed_work_categories():
+    if await db.work_categories.count_documents({}) == 0:
+        await db.work_categories.insert_many([
+            {
+                "id": str(uuid.uuid4()), "name": n, "imageUrl": None,
+                "createdAt": now_iso(), "updatedAt": now_iso(),
+            }
+            for n in DEFAULT_WORK_CATEGORIES
+        ])
+        logger.info("Seeded default work categories")
+
+
+@api.get("/work-categories")
+async def list_work_categories():
+    """Public: list of project work categories (with optional images)."""
+    docs = await db.work_categories.find({}, {"_id": 0}).sort("createdAt", 1).to_list(500)
+    if not docs:
+        await _seed_work_categories()
+        docs = await db.work_categories.find({}, {"_id": 0}).sort("createdAt", 1).to_list(500)
+    return docs
+
+
+@api.post("/admin/work-categories")
+async def create_work_category(body: WorkCategoryIn, user: dict = Depends(require_admin)):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nama kategori wajib diisi")
+    if await db.work_categories.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}):
+        raise HTTPException(status_code=400, detail="Kategori dengan nama ini sudah ada")
+    doc = {
+        "id": str(uuid.uuid4()), "name": name,
+        "imageUrl": body.imageUrl or None,
+        "createdAt": now_iso(), "updatedAt": now_iso(),
+    }
+    await db.work_categories.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/admin/work-categories/{cat_id}")
+async def update_work_category(cat_id: str, body: WorkCategoryIn, user: dict = Depends(require_admin)):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nama kategori wajib diisi")
+    dup = await db.work_categories.find_one(
+        {"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}, "id": {"$ne": cat_id}}
+    )
+    if dup:
+        raise HTTPException(status_code=400, detail="Kategori dengan nama ini sudah ada")
+    res = await db.work_categories.update_one(
+        {"id": cat_id},
+        {"$set": {"name": name, "imageUrl": body.imageUrl or None, "updatedAt": now_iso()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Kategori tidak ditemukan")
+    return await db.work_categories.find_one({"id": cat_id}, {"_id": 0})
+
+
+@api.delete("/admin/work-categories/{cat_id}")
+async def delete_work_category(cat_id: str, user: dict = Depends(require_admin)):
+    res = await db.work_categories.delete_one({"id": cat_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Kategori tidak ditemukan")
+    return {"ok": True}
+
+
 @api.get("/admin/settings")
 async def get_admin_settings(user: dict = Depends(require_admin)):
     return await _get_settings()
@@ -1966,6 +2041,10 @@ async def startup():
         await db.backups.create_index([("user_id", 1), ("createdAt", -1)])
     except Exception as e:
         logger.error(f"Backup index init failed: {e}")
+    try:
+        await _seed_work_categories()
+    except Exception as e:
+        logger.error(f"Work categories seed failed: {e}")
 
 
 @app.on_event("shutdown")
