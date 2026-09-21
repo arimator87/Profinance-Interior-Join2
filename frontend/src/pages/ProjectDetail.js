@@ -18,7 +18,7 @@ import { ProgressTab } from "@/components/tabs/ProgressTab";
 import { ReportTab } from "@/components/tabs/ReportTab";
 import {
   ArrowLeft, Loader2, Wallet, TrendingUp, Receipt, Building2, Trash2, Lock,
-  Wallet2, ListChecks, FileBarChart, Crown, MapPin, Calendar, Pencil, Briefcase,
+  Wallet2, ListChecks, FileBarChart, Crown, MapPin, Calendar, Pencil, Briefcase, Download,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -43,6 +43,7 @@ export default function ProjectDetail() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("cashflow");
   const [editOpen, setEditOpen] = useState(false);
+  const [backing, setBacking] = useState(false);
 
   const loadProject = useCallback(async () => {
     try {
@@ -70,6 +71,24 @@ export default function ProjectDetail() {
   const deleteProject = async () => {
     try { await api.delete(`/projects/${id}`); toast.success("Proyek dihapus"); navigate("/dashboard"); }
     catch { toast.error("Gagal menghapus proyek"); }
+  };
+
+  const downloadProjectBackup = async () => {
+    setBacking(true);
+    const tid = toast.loading("Menyiapkan backup proyek (termasuk foto)...");
+    try {
+      const res = await api.get(`/projects/${id}/backup/export`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/zip" }));
+      const a = document.createElement("a");
+      a.href = url;
+      const slug = (project?.name || "proyek").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+      a.download = `profinance-${slug}.zip`;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Backup proyek berhasil diunduh", { id: tid });
+    } catch {
+      toast.error("Gagal membuat backup proyek", { id: tid });
+    } finally { setBacking(false); }
   };
 
   if (loading || !project) {
@@ -113,6 +132,9 @@ export default function ProjectDetail() {
                 </div>
               </div>
               <div className="flex gap-2 shrink-0">
+                <button data-testid="btn-backup-project" onClick={downloadProjectBackup} disabled={backing} title="Backup proyek (.zip)" className="w-9 h-9 rounded-lg bg-white/20 backdrop-blur hover:bg-emerald-500 flex items-center justify-center text-white transition-colors disabled:opacity-60">
+                  {backing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                </button>
                 <button data-testid="btn-edit-project" onClick={() => setEditOpen(true)} className="w-9 h-9 rounded-lg bg-white/20 backdrop-blur hover:bg-amber-500 flex items-center justify-center text-white transition-colors"><Pencil className="w-4 h-4" /></button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild><button data-testid="btn-delete-project" className="w-9 h-9 rounded-lg bg-white/20 backdrop-blur hover:bg-red-500 flex items-center justify-center text-white transition-colors"><Trash2 className="w-4 h-4" /></button></AlertDialogTrigger>

@@ -60,3 +60,20 @@ def get_object(path: str):
         )
     resp.raise_for_status()
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+def delete_object(path: str) -> bool:
+    """Best-effort delete of a stored object. Returns True if removed/absent."""
+    try:
+        key = init_storage()
+        resp = requests.delete(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key}, timeout=30,
+        )
+        if resp.status_code == 404:
+            return True
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        logger.warning(f"delete_object failed for {path}: {e}")
+        return False

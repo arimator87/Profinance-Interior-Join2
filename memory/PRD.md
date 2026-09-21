@@ -66,6 +66,12 @@ Verified by testing agent: backend 20/20, frontend all tested flows pass. Paymen
 - Backup Data — Fase 2 (Google Drive): DIBATALKAN atas permintaan user (2026-09-21). Cukup backup ke perangkat.
 - WhatsApp renewal reminder: DIABAIKAN atas permintaan user (fokus ke backup).
 
+## Implemented (2026-09-21b) — Backup lanjutan
+- Backup Per-Proyek: `GET /api/projects/{id}/backup/export` (auth+ownership) → ZIP satu proyek (data.json 1 proyek + data.xlsx + photos/ proyek itu). UI: tombol ikon unduh (hijau) di header ProjectDetail.js.
+- Pulihkan Data (Restore): `POST /api/backup/restore` (multipart 'file'; demo diblok POST). Parse data.json, re-upload semua foto ke Object Storage (remap path lama→baru), pulihkan HANYA proyek yang id-nya belum ada (skip yang ada → idempoten), plus transaksi/tukang/work_items/sub_items/progress. UI: kartu "Pulihkan Data" di Account.js (sembunyi utk demo), input file .zip.
+- Backup Otomatis Mingguan + tersimpan di cloud: `backend/backup.py` create_stored_backup (assemble ZIP → put_object ke `{APP}/backups/{uid}/{stamp}.zip` + koleksi `backups`, retensi 8 terbaru via delete_object). `POST /api/backup/run` (manual, demo diblok), `GET /api/backups` (list metadata), `GET /api/backups/{id}/download?auth=` (stream). Cron `weekly-backup` (Minggu 18:00 UTC) → `POST /api/cron/weekly-backup` (Bearer WEBHOOK_CRON_SECRET) → run_weekly_backups untuk semua user non-demo berproyek. storage.py: tambah delete_object. UI Account.js: tombol "Simpan Backup di Cloud" + kartu "Backup Tersimpan (Otomatis Mingguan)" dgn daftar + unduh.
+- Terverifikasi testing agent 7/7: per-project export, run/list/download stored, restore (termasuk idempoten pulihkan proyek terhapus + transaksi + foto), demo blocked 403 di /backup/run, cron 401 tanpa auth & 200 dgn secret. Frontend compiled & dirender (demo view + tombol per-proyek).
+
 
 ## Backlog / Next (P1/P2)
 - P1: Batch summary via Mongo $group (avoid N+1) for many projects

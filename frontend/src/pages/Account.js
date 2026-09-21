@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -6,10 +6,12 @@ import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { rupiah, fmtDate } from "@/lib/format";
+import { API } from "@/lib/api";
 import { toast } from "sonner";
 import {
   ArrowLeft, Crown, Sparkles, Receipt, Loader2, BellRing, Clock, CheckCircle2, XCircle,
-  DatabaseBackup, Download, Image as ImageIcon, FolderArchive,
+  DatabaseBackup, Download, Image as ImageIcon, FolderArchive, RotateCcw, UploadCloud,
+  History, Zap,
 } from "lucide-react";
 
 const STATUS = {
@@ -26,11 +28,23 @@ const PLAN_LABEL = { monthly: "Premium Bulanan", yearly: "Premium Tahunan" };
 export default function Account() {
   const navigate = useNavigate();
   const { user, isPremium } = useAuth();
+  const isDemo = user?.isDemo;
+  const fileRef = useRef(null);
   const [orders, setOrders] = useState([]);
   const [notifs, setNotifs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [backing, setBacking] = useState(false);
+  const [backups, setBackups] = useState([]);
+  const [running, setRunning] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+
+  const loadBackups = async () => {
+    try {
+      const b = await api.get("/backups");
+      setBackups(b.data);
+    } catch { /* ignore */ }
+  };
 
   useEffect(() => {
     (async () => {
@@ -44,6 +58,7 @@ export default function Account() {
         setNotifs(n.data);
         setSummary(s.data);
       } catch { /* ignore */ } finally { setLoading(false); }
+      loadBackups();
     })();
   }, []);
 
@@ -66,6 +81,57 @@ export default function Account() {
       toast.error("Gagal membuat backup. Coba lagi.", { id: tid });
     } finally {
       setBacking(false);
+    }
+  };
+
+  const runBackupNow = async () => {
+    setRunning(true);
+    const tid = toast.loading("Membuat backup tersimpan...");
+    try {
+      await api.post("/backup/run");
+      toast.success("Backup tersimpan berhasil dibuat", { id: tid });
+      loadBackups();
+    } catch (e) {
+      const msg = e?.response?.data?.detail || "Gagal membuat backup";
+      toast.error(msg, { id: tid });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const downloadStored = (b) => {
+    const token = localStorage.getItem("pf_token");
+    const url = `${API}/backups/${b.id}/download?auth=${encodeURIComponent(token || "")}`;
+    window.open(url, "_blank");
+  };
+
+  const onRestoreFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (fileRef.current) fileRef.current.value = "";
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith(".zip")) {
+      toast.error("Pilih file backup .zip");
+      return;
+    }
+    setRestoring(true);
+    const tid = toast.loading("Memulihkan data dari backup...");
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const res = await api.post("/backup/restore", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const d = res.data;
+      if (d.restored_projects > 0) {
+        toast.success(`${d.restored_projects} proyek dipulihkan (${d.restored_transactions} transaksi, ${d.photos_restored} foto)`, { id: tid });
+      } else {
+        toast.success(`Tidak ada proyek baru dipulihkan (${d.skipped_projects} sudah ada)`, { id: tid });
+      }
+      const s = await api.get("/backup/summary");
+      setSummary(s.data);
+    } catch (e2) {
+      const msg = e2?.response?.data?.detail || "Gagal memulihkan data";
+      toast.error(msg, { id: tid });
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -120,7 +186,7 @@ export default function Account() {
               <h3 className="font-display font-bold text-lg text-slate-900">Backup Data</h3>
               <p className="text-sm text-slate-500">
                 Unduh cadangan lengkap semua proyek, transaksi, tukang, progress, dan seluruh foto
-                dalam satu file ZIP. Simpan di perangkat atau Google Drive Anda.
+                dalam satu file ZIP. Simpan di perangkat Anda, atau biarkan backup otomatis mingguan mengamankannya di cloud.
               </p>
             </div>
           </div>
@@ -155,15 +221,91 @@ export default function Account() {
               {backing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               {backing ? "Menyiapkan..." : "Unduh Backup (.zip)"}
             </Button>
+            {!isDemo && (
+              <Button
+                data-testid="backup-run-btn"
+                onClick={runBackupNow}
+                disabled={running}
+                variant="outline"
+                className="gap-2 border-slate-300"
+              >
+                {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-amber-600" />}
+                Simpan Backup di Cloud
+              </Button>
+            )}
             <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
               <FolderArchive className="w-3.5 h-3.5" />
               Berisi data.json, data.xlsx & folder foto
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-3">
-            Tips: setelah terunggah, Anda dapat menyimpan file ZIP ini ke Google Drive lewat aplikasi Drive di perangkat Anda.
+          <p className="text-xs text-slate-400 mt-3 flex items-center gap-1.5">
+            <History className="w-3.5 h-3.5" />
+            Backup otomatis dibuat setiap minggu dan tersimpan aman di cloud (tersedia untuk diunduh di bawah).
           </p>
         </Card>
+
+        {/* Stored / scheduled backups */}
+        <Card className="p-6 mb-6 border-slate-200 bg-white" data-testid="stored-backups-card">
+          <div className="flex items-center gap-2 mb-4">
+            <History className="w-4 h-4 text-amber-600" />
+            <h3 className="font-display font-bold">Backup Tersimpan (Otomatis Mingguan)</h3>
+          </div>
+          {backups.length === 0 ? (
+            <p className="text-sm text-slate-400 py-4 text-center">
+              Belum ada backup tersimpan. Backup otomatis berjalan setiap minggu, atau tekan tombol Simpan Backup di Cloud.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {backups.map((b) => (
+                <div key={b.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3" data-testid={`backup-${b.id}`}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                      <FolderArchive className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className="truncate">{fmtDate(b.createdAt)}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${b.kind === "auto" ? "bg-blue-100 text-blue-600" : "bg-amber-100 text-amber-700"}`}>
+                        {b.kind === "auto" ? "Otomatis" : "Manual"}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      {b.counts?.projects || 0} proyek · {b.counts?.photos || 0} foto · {((b.size || 0) / 1024 / 1024).toFixed(2)} MB
+                    </div>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => downloadStored(b)} className="gap-1.5 shrink-0 border-slate-300" data-testid={`backup-dl-${b.id}`}>
+                    <Download className="w-3.5 h-3.5" /> Unduh
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        {/* Restore */}
+        {!isDemo && (
+          <Card className="p-6 mb-6 border-slate-200 bg-white" data-testid="restore-card">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
+                <RotateCcw className="w-5 h-5 text-emerald-600" />
+              </div>
+              <div>
+                <h3 className="font-display font-bold text-lg text-slate-900">Pulihkan Data</h3>
+                <p className="text-sm text-slate-500">
+                  Unggah file backup (.zip) untuk memulihkan proyek yang terhapus, lengkap dengan transaksi dan foto.
+                  Proyek yang sudah ada tidak akan diduplikasi.
+                </p>
+              </div>
+            </div>
+            <input ref={fileRef} type="file" accept=".zip" onChange={onRestoreFile} className="hidden" data-testid="restore-input" />
+            <Button
+              data-testid="restore-btn"
+              onClick={() => fileRef.current?.click()}
+              disabled={restoring}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2"
+            >
+              {restoring ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+              {restoring ? "Memulihkan..." : "Pilih File Backup (.zip)"}
+            </Button>
+          </Card>
+        )}
 
         {/* Reminders */}
         {notifs.length > 0 && (

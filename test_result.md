@@ -122,8 +122,8 @@ backend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.2"
-  test_sequence: 2
+  version: "1.4"
+  test_sequence: 4
   run_ui: false
 
 test_plan:
@@ -132,8 +132,49 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+backend_new:
+  - task: "Per-project backup export (/api/projects/{id}/backup/export)"
+    implemented: true
+    working: true
+    file: "backend/backup.py, backend/server.py"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "GET, auth required, verifies project ownership. Returns application/zip scoped to ONE project (data.json + data.xlsx + photos/ of that project only). Demo (GET) allowed."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED. Test flow: (1) Registered new user test_backup_20260921_113536@test.com, got token. (2) Created project 'Backup Test Proyek' (id: f7512be3-82ed-490e-ad62-8fd48933a6d6) with nominal 100M. (3) Added transaction (type=in, amount=5M, category=Termin). (4) GET /api/projects/{id}/backup/export returned 200, Content-Type: application/zip, 7820 bytes. (5) ZIP verified: contains data.json (1248 bytes), data.xlsx (7687 bytes), manifest.json (379 bytes). (6) data.json contains exactly 1 project with correct id. All fields validated. Export working perfectly."
+  - task: "Restore from ZIP (/api/backup/restore)"
+    implemented: true
+    working: true
+    file: "backend/backup.py, backend/server.py"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST multipart file. Parses data.json, re-uploads photos to Object Storage (remaps paths), restores projects whose id does NOT already exist for the user (skips existing), plus their transactions/workers/work_items/sub_items/progress_entries. Returns counts. Demo blocked (POST->403)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED. Complete restore flow tested: (1) Exported project ZIP (7820 bytes). (2) Deleted project via DELETE /api/projects/{id} -> 200. (3) Verified project removed from GET /api/projects. (4) POST /api/backup/restore with multipart file -> 200, returned {restored_projects:1, restored_transactions:1, photos_restored:0, skipped_projects:0}. (5) Verified project reappeared in GET /api/projects with correct name 'Backup Test Proyek'. (6) Verified transaction restored via GET /api/projects/{id}/transactions (1 transaction found). (7) IDEMPOTENCY TEST: Restored same ZIP again -> 200, returned {restored_projects:0, skipped_projects:1} - correctly skips existing projects. Restore feature working perfectly including idempotent behavior."
+  - task: "Stored backups run/list/download + weekly cron"
+    implemented: true
+    working: true
+    file: "backend/backup.py, backend/server.py, .emergent/crons.yml"
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/backup/run creates a stored backup (uploads ZIP to Object Storage + backups collection, retention keep 8). GET /api/backups lists metadata. GET /api/backups/{id}/download streams stored ZIP. POST /api/cron/weekly-backup (Bearer WEBHOOK_CRON_SECRET) queues run_weekly_backups. Demo blocked on POST /backup/run."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED. All stored backup endpoints tested: (1) POST /api/backup/run -> 200, returned backup doc with id=892205e4-252d-4a85-9a72-a9eed8f4d9bc, filename='profinance-backup-20260921-113537.zip', size=7818, kind='manual', counts={projects:1, transactions:1, photos:0}, createdAt timestamp. All required fields present. (2) GET /api/backups -> 200, returned array with 1 backup, found expected backup by id. (3) GET /api/backups/{id}/download?auth={token} -> 200, Content-Type: application/zip, 7818 bytes, valid ZIP with 3 files. (4) Demo user block: POST /api/auth/demo got token, then POST /api/backup/run with demo token -> 403 (correctly blocked). (5) Cron auth: POST /api/cron/weekly-backup without auth -> 401. With Authorization: Bearer {WEBHOOK_CRON_SECRET} -> 200 {ok:true, queued:true}. All endpoints working correctly."
+
 agent_communication:
     -agent: "main"
-    -message: "Please test the new backup endpoints only. Auth: you can create a session via POST /api/auth/demo (public, returns token) OR register/login. Use Bearer token. Verify /api/backup/summary returns counts and /api/backup/export returns a valid non-empty application/zip. Do NOT test payment/Midtrans or other existing flows."
+    -message: "Round 3: Test the NEW backup endpoints. Use a REAL registered user (register via POST /api/auth/register with email+password), because restore & /backup/run are POST and demo is read-only (would 403). Flow to test: (1) Register user, get token. (2) Create a project (POST /api/projects) + add a transaction. (3) GET /api/projects/{id}/backup/export -> expect application/zip. (4) POST /api/backup/run -> expect 200 with a backup doc (id, filename, counts). (5) GET /api/backups -> list contains that backup. (6) GET /api/backups/{backup_id}/download?auth=<token> -> valid zip bytes. (7) RESTORE TEST: export the project ZIP body from step3, DELETE the project (DELETE /api/projects/{id}), then POST /api/backup/restore with that ZIP file (multipart 'file') -> expect restored_projects>=1; confirm the project reappears in GET /api/projects. (8) Confirm demo user (POST /api/auth/demo) gets 403 on POST /api/backup/run. (9) Cron: POST /api/cron/weekly-backup without auth -> 401; with Bearer WEBHOOK_CRON_SECRET (from backend/.env) -> 200 {queued:true}. Do NOT test Midtrans."
     -agent: "testing"
-    -message: "✅ Backup endpoints testing COMPLETE. All 3 tests passed (100% success rate). Endpoints working correctly: (1) Unauthenticated access properly blocked with 401, (2) Authenticated /api/backup/summary returns valid counts, (3) Authenticated /api/backup/export returns valid ZIP with data.json, data.xlsx, and manifest.json. Demo account (read-only) can successfully export. Note: photos=0 for demo is correct behavior (external URLs excluded by design). No backend errors found in logs. Ready for production use."
+    -message: "✅ ALL NEW BACKUP ENDPOINTS TESTED AND WORKING PERFECTLY. Executed comprehensive test suite covering all 3 new tasks: (1) Per-project export: Registered user, created project with transaction, exported via GET /api/projects/{id}/backup/export, verified ZIP contains data.json (1 project), data.xlsx, manifest.json. (2) Restore: Deleted project, restored from ZIP via POST /api/backup/restore, verified project and transaction reappeared, tested idempotency (second restore correctly skipped existing project). (3) Stored backups: Created manual backup via POST /api/backup/run, listed via GET /api/backups, downloaded via GET /api/backups/{id}/download, verified demo user blocked (403), verified cron auth (401 without secret, 200 with correct Bearer token). All 7 test cases passed with correct status codes, response formats, and data integrity. No backend errors in logs. Ready for production."

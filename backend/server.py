@@ -1678,6 +1678,93 @@ async def backup_export(user: dict = Depends(get_current_user)):
     )
 
 
+@api.get("/projects/{project_id}/backup/export")
+async def backup_export_project(project_id: str, user: dict = Depends(get_current_user)):
+    """Download a ZIP backup of a single project (data + its photos)."""
+    await get_owned_project(project_id, user)
+    data = await backup_mod.gather_user_data(user, project_ids=[project_id])
+    photo_paths = backup_mod._collect_photo_paths(data)
+    proj_label = data["projects"][0].get("name", "proyek") if data["projects"] else "proyek"
+    zip_path, stats = await run_in_threadpool(
+        backup_mod._assemble_zip, data, user, photo_paths, proj_label
+    )
+    slug = slugify(proj_label) or "proyek"
+    filename = f"profinance-{slug}-{stats['stamp']}.zip"
+
+    def _cleanup(p=zip_path):
+        try:
+            os.unlink(p)
+        except Exception:
+            pass
+
+    return FileResponse(
+        zip_path, media_type="application/zip", filename=filename,
+        background=BackgroundTask(_cleanup),
+    )
+
+
+@api.post("/backup/run")
+async def backup_run(user: dict = Depends(get_current_user)):
+    """Create a stored backup now (saved to Object Storage), same as the weekly job."""
+    doc = await backup_mod.create_stored_backup(user, kind="manual")
+    if not doc:
+        raise HTTPException(status_code=400, detail="Belum ada proyek untuk dibackup.")
+    return doc
+
+
+@api.get("/backups")
+async def list_backups(user: dict = Depends(get_current_user)):
+    """List stored backups (auto + manual) for the current user, newest first."""
+    docs = await db.backups.find(
+        {"user_id": user["user_id"]}, {"_id": 0, "storage_path": 0}
+    ).sort("createdAt", -1).to_list(100)
+    return docs
+
+
+@api.get("/backups/{backup_id}/download")
+async def download_backup(backup_id: str, request: Request, auth: Optional[str] = Query(None)):
+    """Download a previously stored backup ZIP."""
+    user = await _user_from_request_or_query(request, auth)
+    doc = await db.backups.find_one({"id": backup_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Backup tidak ditemukan")
+    data, _ct = await run_in_threadpool(get_object, doc["storage_path"])
+    return Response(
+        content=data, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{doc["filename"]}"'},
+    )
+
+
+@api.post("/backup/restore")
+async def backup_restore(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """Restore from an uploaded backup ZIP. Restores projects that don't already exist."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="File kosong.")
+    if len(content) > 200 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File terlalu besar (maks 200MB).")
+    try:
+        result = await backup_mod.restore_from_zip(user, content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"restore failed: {e}")
+        raise HTTPException(status_code=500, detail="Gagal memulihkan data.")
+    return result
+
+
+@api.post("/cron/weekly-backup")
+async def cron_weekly_backup(request: Request, background: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET")
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    if not secret or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background.add_task(backup_mod.run_weekly_backups)
+    return {"ok": True, "queued": True}
+
+
 @api.get("/")
 async def root():
     return {"message": "ProFinance Interior API"}
@@ -1821,6 +1908,11 @@ async def startup():
         await db.orders.create_index("user_id")
     except Exception as e:
         logger.error(f"Order index init failed: {e}")
+    try:
+        await db.backups.create_index("user_id")
+        await db.backups.create_index([("user_id", 1), ("createdAt", -1)])
+    except Exception as e:
+        logger.error(f"Backup index init failed: {e}")
 
 
 @app.on_event("shutdown")
