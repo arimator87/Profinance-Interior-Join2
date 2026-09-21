@@ -1,17 +1,27 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, PlayCircle, Receipt, BellRing, Settings, Users } from "lucide-react";
+import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, PlayCircle, Receipt, BellRing, Settings, Users, Megaphone } from "lucide-react";
 import { toast } from "sonner";
 
 export function Header() {
   const { user, logout, isPremium, isDemo, isAdmin } = useAuth();
   const navigate = useNavigate();
+  const [announcement, setAnnouncement] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    api.get("/settings/public")
+      .then((r) => { if (active) setAnnouncement((r.data?.announcement || "").trim()); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const expiry = user?.subscriptionExpiry ? new Date(user.subscriptionExpiry) : null;
   const daysLeft = expiry ? Math.ceil((expiry - new Date()) / 86400000) : null;
@@ -25,6 +35,12 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur-xl">
+      {announcement && (
+        <div data-testid="announcement-banner" className="bg-slate-900 text-amber-50 text-xs sm:text-sm px-4 py-2 flex items-center justify-center gap-2 text-center">
+          <Megaphone className="w-4 h-4 shrink-0 text-amber-400" />
+          <span className="font-medium">{announcement}</span>
+        </div>
+      )}
       {isDemo && (
         <div data-testid="demo-banner" className="bg-blue-600 text-white text-xs sm:text-sm px-4 py-2 text-center">
           <span className="font-semibold">Mode Demo (baca-saja)</span> — Anda menjelajah dengan data contoh.{" "}

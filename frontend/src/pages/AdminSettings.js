@@ -9,8 +9,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft, Settings, Loader2, ShieldCheck, Save } from "lucide-react";
+import { ArrowLeft, Settings, Loader2, ShieldCheck, Save, Tag } from "lucide-react";
+import { rupiah } from "@/lib/format";
 import { toast } from "sonner";
+
+function priceHint(base, promo, promoActive) {
+  const b = Number(base) || 0;
+  const p = Number(promo) || 0;
+  if (promoActive && p > 0 && p < b) {
+    const disc = Math.round((1 - p / b) * 100);
+    return `Aktif: pelanggan bayar ${rupiah(p)} (dari ${rupiah(b)}, hemat ${disc}%).`;
+  }
+  return `Pelanggan bayar ${rupiah(b)} (harga normal).`;
+}
 
 export default function AdminSettings() {
   const navigate = useNavigate();
@@ -37,6 +48,7 @@ export default function AdminSettings() {
   }, [isAdmin, navigate]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const setNum = (k, v) => setForm((f) => ({ ...f, [k]: Math.max(0, Math.round(Number(v) || 0)) }));
 
   const save = async () => {
     setSaving(true);
@@ -92,7 +104,7 @@ export default function AdminSettings() {
               <div>
                 <Label className="text-slate-700">Banner Pengumuman</Label>
                 <Textarea data-testid="setting-announcement" value={form.announcement || ""} onChange={(e) => set("announcement", e.target.value)} className="mt-1 bg-white" rows={2} placeholder="Contoh: Promo tahunan diskon 28% hingga akhir bulan!" />
-                <p className="text-[11px] text-slate-400 mt-1">Tampil sebagai pengumuman global (untuk kebutuhan mendatang).</p>
+                <p className="text-[11px] text-slate-400 mt-1">Tampil sebagai banner pengumuman di bagian atas semua halaman pengguna (Dashboard, Akun, Harga, dll). Kosongkan untuk menyembunyikan.</p>
               </div>
               <div className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-3">
                 <div>
@@ -100,6 +112,50 @@ export default function AdminSettings() {
                   <div className="text-[11px] text-slate-400">Nonaktifkan sementara untuk perawatan.</div>
                 </div>
                 <Switch data-testid="setting-maintenance" checked={!!form.maintenanceMode} onCheckedChange={(v) => set("maintenanceMode", v)} />
+              </div>
+            </Card>
+
+            <Card className="p-6 border-slate-200 bg-white space-y-4">
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-amber-600" />
+                <h3 className="font-display font-bold text-slate-900">Harga & Promo</h3>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3">
+                <div>
+                  <div className="text-sm font-medium text-slate-800">Aktifkan Harga Promo</div>
+                  <div className="text-[11px] text-slate-500">Bila aktif, harga promo (jika lebih rendah) dipakai di halaman Harga & pembayaran.</div>
+                </div>
+                <Switch data-testid="setting-promo-active" checked={!!form.promoActive} onCheckedChange={(v) => set("promoActive", v)} />
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+                <div className="text-sm font-semibold text-slate-800">Paket Bulanan (30 hari)</div>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-slate-700">Harga Normal (Rp)</Label>
+                    <Input data-testid="setting-monthly-price" type="number" min="0" value={form.monthlyPrice ?? 0} onChange={(e) => setNum("monthlyPrice", e.target.value)} className="mt-1 h-11 bg-white font-mono" />
+                  </div>
+                  <div>
+                    <Label className="text-slate-700">Harga Promo (Rp)</Label>
+                    <Input data-testid="setting-monthly-promo" type="number" min="0" value={form.monthlyPromo ?? 0} onChange={(e) => setNum("monthlyPromo", e.target.value)} className="mt-1 h-11 bg-white font-mono" />
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400">{priceHint(form.monthlyPrice, form.monthlyPromo, form.promoActive)}</p>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+                <div className="text-sm font-semibold text-slate-800">Paket Tahunan (365 hari)</div>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-slate-700">Harga Normal (Rp)</Label>
+                    <Input data-testid="setting-yearly-price" type="number" min="0" value={form.yearlyPrice ?? 0} onChange={(e) => setNum("yearlyPrice", e.target.value)} className="mt-1 h-11 bg-white font-mono" />
+                  </div>
+                  <div>
+                    <Label className="text-slate-700">Harga Promo (Rp)</Label>
+                    <Input data-testid="setting-yearly-promo" type="number" min="0" value={form.yearlyPromo ?? 0} onChange={(e) => setNum("yearlyPromo", e.target.value)} className="mt-1 h-11 bg-white font-mono" />
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400">{priceHint(form.yearlyPrice, form.yearlyPromo, form.promoActive)}</p>
               </div>
             </Card>
 

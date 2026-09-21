@@ -122,8 +122,8 @@ backend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.4"
-  test_sequence: 4
+  version: "1.5"
+  test_sequence: 5
   run_ui: false
 
 test_plan:
@@ -131,6 +131,21 @@ test_plan:
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend_pricing:
+  - task: "Admin pricing/promo settings + public + checkout amount"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Added settings fields monthlyPrice/monthlyPromo/yearlyPrice/yearlyPromo/promoActive (defaults 149000/149000/1290000/1290000/false). GET/PUT /api/admin/settings (admin-only) accept them. GET /api/settings/public exposes them. Checkout computes gross_amount from settings: effective=promo if(promoActive and 0<promo<base) else base; fallback base if<=0. Announcement banner rendered in Header (frontend)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ ALL TESTS PASSED. Test results: (1) GET /api/settings/public (no auth) returns 200 with all required fields: monthlyPrice=149000, monthlyPromo=149000, yearlyPrice=1290000, yearlyPromo=1290000, promoActive=false. Also returns appName='ProFinance Interior' and announcement='' (legacy fields preserved). All defaults match specification. (2) Admin guard GET: Registered normal user test_pricing_20260921_115856@test.com, attempted GET /api/admin/settings with Bearer token -> correctly returns 403 (Akses khusus admin). (3) Admin guard PUT: Same normal user attempted PUT /api/admin/settings with body {promoActive:true} -> correctly returns 403. (4) Checkout amount derivation: Using normal user token, POST /api/subscription/checkout {plan:'monthly'} -> 200 with Midtrans token (order_id: PF-user_4de9949-d74350b89a). POST /api/subscription/checkout {plan:'yearly'} -> 200 with Midtrans token (order_id: PF-user_4de9949-1a32348570). GET /api/subscription/orders returned 2 orders with correct gross_amount: monthly=149000, yearly=1290000 (amounts correctly derived from settings defaults). No 500 errors or backend crashes. Backend logs clean (no tracebacks). All 4 test cases passed."
 
 backend_new:
   - task: "Per-project backup export (/api/projects/{id}/backup/export)"
@@ -178,3 +193,7 @@ agent_communication:
     -message: "Round 3: Test the NEW backup endpoints. Use a REAL registered user (register via POST /api/auth/register with email+password), because restore & /backup/run are POST and demo is read-only (would 403). Flow to test: (1) Register user, get token. (2) Create a project (POST /api/projects) + add a transaction. (3) GET /api/projects/{id}/backup/export -> expect application/zip. (4) POST /api/backup/run -> expect 200 with a backup doc (id, filename, counts). (5) GET /api/backups -> list contains that backup. (6) GET /api/backups/{backup_id}/download?auth=<token> -> valid zip bytes. (7) RESTORE TEST: export the project ZIP body from step3, DELETE the project (DELETE /api/projects/{id}), then POST /api/backup/restore with that ZIP file (multipart 'file') -> expect restored_projects>=1; confirm the project reappears in GET /api/projects. (8) Confirm demo user (POST /api/auth/demo) gets 403 on POST /api/backup/run. (9) Cron: POST /api/cron/weekly-backup without auth -> 401; with Bearer WEBHOOK_CRON_SECRET (from backend/.env) -> 200 {queued:true}. Do NOT test Midtrans."
     -agent: "testing"
     -message: "✅ ALL NEW BACKUP ENDPOINTS TESTED AND WORKING PERFECTLY. Executed comprehensive test suite covering all 3 new tasks: (1) Per-project export: Registered user, created project with transaction, exported via GET /api/projects/{id}/backup/export, verified ZIP contains data.json (1 project), data.xlsx, manifest.json. (2) Restore: Deleted project, restored from ZIP via POST /api/backup/restore, verified project and transaction reappeared, tested idempotency (second restore correctly skipped existing project). (3) Stored backups: Created manual backup via POST /api/backup/run, listed via GET /api/backups, downloaded via GET /api/backups/{id}/download, verified demo user blocked (403), verified cron auth (401 without secret, 200 with correct Bearer token). All 7 test cases passed with correct status codes, response formats, and data integrity. No backend errors in logs. Ready for production."
+    -agent: "main"
+    -message: "Round 4: Test admin pricing/promo. (1) GET /api/settings/public -> confirm returns monthlyPrice, monthlyPromo, yearlyPrice, yearlyPromo, promoActive (defaults 149000/149000/1290000/1290000/false). (2) Register a NORMAL user (non-admin) -> GET /api/admin/settings and PUT /api/admin/settings must return 403. (3) Register a normal user, POST /api/subscription/checkout {plan:'monthly'} then {plan:'yearly'}; Midtrans is production/external so a 200(token) OR 502 are both acceptable - the point is NO 500 from our code. Then GET /api/subscription/orders and confirm the created orders have gross_amount == 149000 (monthly) and 1290000 (yearly) i.e. amount is derived from settings defaults. Do NOT fail the task if Midtrans itself returns 502; only fail on 500/crash in our code or wrong gross_amount. Do not test unrelated flows."
+    -agent: "testing"
+    -message: "✅ ALL ADMIN PRICING/PROMO TESTS PASSED. Executed 4 test cases: (1) GET /api/settings/public (no auth) -> 200, returned all required fields (monthlyPrice=149000, monthlyPromo=149000, yearlyPrice=1290000, yearlyPromo=1290000, promoActive=false) plus legacy fields (appName, announcement). All defaults match specification. (2) Admin guard GET: Registered normal user, GET /api/admin/settings -> 403 (correctly blocked). (3) Admin guard PUT: Same user, PUT /api/admin/settings {promoActive:true} -> 403 (correctly blocked). (4) Checkout amount derivation: POST /api/subscription/checkout for monthly and yearly plans both returned 200 (Midtrans accepted), GET /api/subscription/orders confirmed gross_amount=149000 (monthly) and 1290000 (yearly) - amounts correctly derived from settings. No 500 errors, no backend crashes, logs clean. Feature working perfectly."

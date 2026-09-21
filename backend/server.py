@@ -437,8 +437,18 @@ async def create_checkout(body: CheckoutIn, user: dict = Depends(get_current_use
         raise HTTPException(status_code=400, detail="Paket tidak valid")
     if not MIDTRANS_SERVER_KEY:
         raise HTTPException(status_code=500, detail="Pembayaran belum dikonfigurasi")
+    # Resolve price from admin settings (supports promo pricing)
+    settings = await _get_settings()
+    promo_active = bool(settings.get("promoActive"))
+    if body.plan == "monthly":
+        amount = _effective_price(settings.get("monthlyPrice", plan["amount"]),
+                                  settings.get("monthlyPromo", 0), promo_active)
+    else:
+        amount = _effective_price(settings.get("yearlyPrice", plan["amount"]),
+                                  settings.get("yearlyPromo", 0), promo_active)
+    if amount <= 0:
+        amount = plan["amount"]
     order_id = f"PF-{user['user_id'][:12]}-{uuid.uuid4().hex[:10]}"
-    amount = plan["amount"]
     await db.orders.insert_one({
         "order_id": order_id, "user_id": user["user_id"], "plan": body.plan,
         "plan_days": plan["days"], "gross_amount": amount, "status": "pending",
@@ -550,6 +560,11 @@ DEFAULT_SETTINGS = {
     "supportWhatsapp": "",
     "announcement": "",
     "maintenanceMode": False,
+    "monthlyPrice": 149000,
+    "monthlyPromo": 149000,
+    "yearlyPrice": 1290000,
+    "yearlyPromo": 1290000,
+    "promoActive": False,
 }
 
 
@@ -559,6 +574,11 @@ class SettingsIn(BaseModel):
     supportWhatsapp: Optional[str] = None
     announcement: Optional[str] = None
     maintenanceMode: Optional[bool] = None
+    monthlyPrice: Optional[int] = None
+    monthlyPromo: Optional[int] = None
+    yearlyPrice: Optional[int] = None
+    yearlyPromo: Optional[int] = None
+    promoActive: Optional[bool] = None
 
 
 async def require_admin(user: dict = Depends(get_current_user)):
@@ -591,7 +611,20 @@ async def update_admin_settings(body: SettingsIn, user: dict = Depends(require_a
 @api.get("/settings/public")
 async def public_settings():
     s = await _get_settings()
-    return {k: s[k] for k in ("appName", "announcement", "maintenanceMode", "supportWhatsapp", "supportEmail")}
+    keys = (
+        "appName", "announcement", "maintenanceMode", "supportWhatsapp", "supportEmail",
+        "monthlyPrice", "monthlyPromo", "yearlyPrice", "yearlyPromo", "promoActive",
+    )
+    return {k: s[k] for k in keys}
+
+
+def _effective_price(base: int, promo: int, promo_active: bool) -> int:
+    """Promo price applies only when active and strictly lower than base (and > 0)."""
+    base = int(base or 0)
+    promo = int(promo or 0)
+    if promo_active and 0 < promo < base:
+        return promo
+    return base
 
 
 # ---------- Admin: manajemen pengguna ----------

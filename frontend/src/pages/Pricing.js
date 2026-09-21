@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { rupiah } from "@/lib/format";
 import { motion } from "framer-motion";
 import { Check, Crown, Sparkles, ArrowLeft, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -32,6 +33,21 @@ export default function Pricing() {
   const navigate = useNavigate();
   const { isPremium, refreshUser } = useAuth();
   const [busy, setBusy] = useState(false);
+  const [pricing, setPricing] = useState(null);
+
+  useEffect(() => {
+    api.get("/settings/public").then((r) => setPricing(r.data)).catch(() => {});
+  }, []);
+
+  const eff = (base, promo) => (pricing?.promoActive && promo > 0 && promo < base ? promo : base);
+  const mBase = pricing?.monthlyPrice ?? 149000;
+  const mPromo = pricing?.monthlyPromo ?? mBase;
+  const yBase = pricing?.yearlyPrice ?? 1290000;
+  const yPromo = pricing?.yearlyPromo ?? yBase;
+  const mEff = eff(mBase, mPromo);
+  const yEff = eff(yBase, yPromo);
+  const promoOn = !!pricing?.promoActive && (mEff < mBase || yEff < yBase);
+  const yearSave = mEff > 0 ? Math.round((1 - yEff / (mEff * 12)) * 100) : 0;
 
   const pollOrder = async (orderId) => {
     for (let i = 0; i < 12; i++) {
@@ -118,8 +134,21 @@ export default function Pricing() {
               <div className="absolute top-0 right-0 bg-amber-500 text-white text-[11px] font-bold px-3 py-1 rounded-bl-lg">POPULER</div>
               <div className="flex items-center gap-2 mb-1"><Crown className="w-5 h-5 text-amber-600" /><h3 className="font-display font-bold text-xl">Premium Pro</h3></div>
               <p className="text-slate-500 text-sm">Kontrol penuh proyek & laporan.</p>
-              <div className="mt-5 mb-1"><span className="font-mono font-extrabold text-4xl text-slate-900">Rp 149.000</span><span className="text-slate-500">/bulan</span></div>
-              <p className="text-xs text-slate-400 mb-5">atau Rp 1.290.000 / tahun (hemat 28%)</p>
+              {promoOn && (
+                <span data-testid="promo-badge" className="inline-flex items-center gap-1 mt-3 px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-[11px] font-bold">
+                  PROMO SPESIAL
+                </span>
+              )}
+              <div className="mt-3 mb-1 flex items-baseline gap-2 flex-wrap">
+                {promoOn && mEff < mBase && (
+                  <span className="font-mono text-lg text-slate-400 line-through" data-testid="monthly-base">{rupiah(mBase)}</span>
+                )}
+                <span className="font-mono font-extrabold text-4xl text-slate-900" data-testid="monthly-eff">{rupiah(mEff)}</span>
+                <span className="text-slate-500">/bulan</span>
+              </div>
+              <p className="text-xs text-slate-400 mb-5">
+                atau {rupiah(yEff)} / tahun{yearSave > 0 ? ` (hemat ${yearSave}%)` : ""}
+              </p>
               <ul className="space-y-3 mb-6">
                 {PREMIUM.map((f) => (
                   <li key={f} className="flex items-start gap-2.5 text-sm text-slate-700"><Check className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />{f}</li>
@@ -130,10 +159,10 @@ export default function Pricing() {
               ) : (
                 <div className="space-y-2">
                   <Button data-testid="btn-upgrade-premium" onClick={() => upgrade("monthly")} disabled={busy} className="w-full bg-amber-600 hover:bg-amber-700 text-white gap-2">
-                    {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crown className="w-4 h-4" />} Bayar Bulanan · Rp 149.000
+                    {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crown className="w-4 h-4" />} Bayar Bulanan · {rupiah(mEff)}
                   </Button>
                   <Button data-testid="btn-upgrade-yearly" variant="outline" onClick={() => upgrade("yearly")} disabled={busy} className="w-full border-amber-300 text-amber-700 hover:bg-amber-50">
-                    Bayar Tahunan · Rp 1.290.000 (Hemat)
+                    Bayar Tahunan · {rupiah(yEff)} (Hemat)
                   </Button>
                   <p className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400 pt-1">
                     <ShieldCheck className="w-3.5 h-3.5" /> Pembayaran aman via Midtrans — QRIS, GoPay & VA Bank
