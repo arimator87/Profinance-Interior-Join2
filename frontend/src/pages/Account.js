@@ -6,8 +6,10 @@ import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { rupiah, fmtDate } from "@/lib/format";
+import { toast } from "sonner";
 import {
   ArrowLeft, Crown, Sparkles, Receipt, Loader2, BellRing, Clock, CheckCircle2, XCircle,
+  DatabaseBackup, Download, Image as ImageIcon, FolderArchive,
 } from "lucide-react";
 
 const STATUS = {
@@ -27,16 +29,45 @@ export default function Account() {
   const [orders, setOrders] = useState([]);
   const [notifs, setNotifs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [summary, setSummary] = useState(null);
+  const [backing, setBacking] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const [o, n] = await Promise.all([api.get("/subscription/orders"), api.get("/notifications")]);
+        const [o, n, s] = await Promise.all([
+          api.get("/subscription/orders"),
+          api.get("/notifications"),
+          api.get("/backup/summary"),
+        ]);
         setOrders(o.data);
         setNotifs(n.data);
+        setSummary(s.data);
       } catch { /* ignore */ } finally { setLoading(false); }
     })();
   }, []);
+
+  const downloadBackup = async () => {
+    setBacking(true);
+    const tid = toast.loading("Menyiapkan backup (termasuk foto)...");
+    try {
+      const res = await api.get("/backup/export", { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/zip" }));
+      const a = document.createElement("a");
+      a.href = url;
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      a.download = `profinance-backup-${stamp}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Backup berhasil diunduh ke perangkat", { id: tid });
+    } catch {
+      toast.error("Gagal membuat backup. Coba lagi.", { id: tid });
+    } finally {
+      setBacking(false);
+    }
+  };
 
   const expiry = user?.subscriptionExpiry ? new Date(user.subscriptionExpiry) : null;
   const daysLeft = expiry ? Math.ceil((expiry - new Date()) / 86400000) : null;
@@ -77,6 +108,61 @@ export default function Account() {
               </Button>
             )}
           </div>
+        </Card>
+
+        {/* Backup Data */}
+        <Card className="p-6 mb-6 border-slate-200 bg-white" data-testid="backup-card">
+          <div className="flex items-start gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
+              <DatabaseBackup className="w-5 h-5 text-amber-600" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-lg text-slate-900">Backup Data</h3>
+              <p className="text-sm text-slate-500">
+                Unduh cadangan lengkap semua proyek, transaksi, tukang, progress, dan seluruh foto
+                dalam satu file ZIP. Simpan di perangkat atau Google Drive Anda.
+              </p>
+            </div>
+          </div>
+
+          {summary && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
+              {[
+                { label: "Proyek", value: summary.projects },
+                { label: "Transaksi", value: summary.transactions },
+                { label: "Tukang", value: summary.workers },
+                { label: "Item RAB", value: summary.work_items },
+                { label: "Log Progress", value: summary.progress_entries },
+                { label: "Foto", value: summary.photos, icon: ImageIcon },
+              ].map((s) => (
+                <div key={s.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400 uppercase tracking-wide">
+                    {s.icon && <s.icon className="w-3 h-3" />} {s.label}
+                  </div>
+                  <div className="font-display font-bold text-slate-900 text-lg">{s.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              data-testid="backup-download-btn"
+              onClick={downloadBackup}
+              disabled={backing}
+              className="bg-slate-900 hover:bg-slate-800 text-white gap-2"
+            >
+              {backing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              {backing ? "Menyiapkan..." : "Unduh Backup (.zip)"}
+            </Button>
+            <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
+              <FolderArchive className="w-3.5 h-3.5" />
+              Berisi data.json, data.xlsx & folder foto
+            </span>
+          </div>
+          <p className="text-xs text-slate-400 mt-3">
+            Tips: setelah terunggah, Anda dapat menyimpan file ZIP ini ke Google Drive lewat aplikasi Drive di perangkat Anda.
+          </p>
         </Card>
 
         {/* Reminders */}

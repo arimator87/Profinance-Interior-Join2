@@ -21,7 +21,9 @@ from fastapi import (
     FastAPI, APIRouter, Depends, HTTPException, Request, Response,
     UploadFile, File, Header, Query, BackgroundTasks,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.concurrency import run_in_threadpool
+from starlette.background import BackgroundTask
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
@@ -37,6 +39,7 @@ from auth import (
 )
 from storage import init_storage, put_object, get_object, APP_NAME, MIME_TYPES
 from pdf_report import build_report_pdf, build_progress_pdf
+import backup as backup_mod
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -1634,6 +1637,45 @@ async def serve_file(path: str, request: Request, auth: Optional[str] = Query(No
         raise HTTPException(status_code=404, detail="File tidak ditemukan")
     data, content_type = get_object(path)
     return Response(content=data, media_type=record.get("content_type", content_type))
+
+
+# ---------- Backup / Export ----------
+@api.get("/backup/summary")
+async def backup_summary(user: dict = Depends(get_current_user)):
+    """Preview counts of what will be included in the backup."""
+    data = await backup_mod.gather_user_data(user)
+    photo_paths = backup_mod._collect_photo_paths(data)
+    return {
+        "projects": len(data["projects"]),
+        "transactions": len(data["transactions"]),
+        "workers": len(data["workers"]),
+        "work_items": len(data["work_items"]),
+        "progress_entries": len(data["progress_entries"]),
+        "photos": len(photo_paths),
+    }
+
+
+@api.get("/backup/export")
+async def backup_export(user: dict = Depends(get_current_user)):
+    """Generate a full ZIP backup (data + photos) and download to device."""
+    data = await backup_mod.gather_user_data(user)
+    photo_paths = backup_mod._collect_photo_paths(data)
+    zip_path, stats = await run_in_threadpool(backup_mod._assemble_zip, data, user, photo_paths)
+    filename = f"profinance-backup-{stats['stamp']}.zip"
+    logger.info(f"Backup export for {user.get('email')}: {stats}")
+
+    def _cleanup(p=zip_path):
+        try:
+            os.unlink(p)
+        except Exception:
+            pass
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=filename,
+        background=BackgroundTask(_cleanup),
+    )
 
 
 @api.get("/")

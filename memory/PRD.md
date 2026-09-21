@@ -60,6 +60,13 @@ Verified by testing agent: backend 20/20, frontend all tested flows pass. Paymen
 ## Implemented (2026-09-20)
 - Manajemen Pengguna (Admin): halaman `/admin/users` (AdminUsers.js, menu Header "Manajemen Pengguna", admin-only). Backend: `GET /api/admin/users` (pencarian nama/email/phone + pagination; per-user: status Free/Premium/Kedaluwarsa, s/d expiry + sisa hari, isDemo, isOwner, projectCount, transactionCount via project_ids, lastLogin dari user_sessions, created_at), `POST /api/admin/users/{id}/premium` {days: 0=permanen, 30/90/365; extend dari max(now, expiry)} dengan notifikasi in-app ke user, `POST /api/admin/users/{id}/revoke` (owner diblok 400, set free + notifikasi). UI: tabel badge status, dialog pilih durasi, AlertDialog konfirmasi cabut, pagination prev/next. Terverifikasi curl: list/search ok, grant 30d + extend 90d menumpuk benar, revoke ok, revoke owner→400, non-admin→403. Screenshot desktop/mobile ok.
 
+## Implemented (2026-09-21)
+- Import project dari GitHub (arimator87/profinance-interior) + reinstall semua dependencies (backend 130 pkg, frontend yarn). Semua service RUNNING & terverifikasi.
+- Backup Data — Fase 1 (unduh ke perangkat): modul `backend/backup.py` + endpoint `GET /api/backup/summary` (hitung proyek/transaksi/tukang/item/progress/foto) & `GET /api/backup/export` (stream ZIP). ZIP berisi `data.json` (dump mentah semua koleksi + photoMapping, untuk restore), `data.xlsx` (openpyxl, 5 sheet: Proyek/Transaksi/Tukang/Item Pekerjaan/Progress Lapangan), `photos/` (semua foto struk+progress dari Object Storage via get_object; URL http eksternal di-skip), `manifest.json`. Assembly di threadpool + FileResponse dgn BackgroundTask cleanup temp. Demo (read-only) boleh export (GET). UI: kartu "Backup Data" di halaman Akun (Account.js) dgn ringkasan hitungan + tombol "Unduh Backup (.zip)". Terverifikasi testing agent 3/3 (unauth→401, summary counts, zip valid berisi data.json+data.xlsx+manifest.json).
+- Backup Data — Fase 2 (Google Drive): PENDING — menunggu kredensial GOOGLE_CLIENT_ID & GOOGLE_CLIENT_SECRET dari user (redirect URI: {BACKEND_URL}/api/oauth/drive/callback). Playbook Google Drive sudah diperoleh.
+- WhatsApp renewal reminder: DIABAIKAN atas permintaan user (fokus ke backup).
+
+
 ## Backlog / Next (P1/P2)
 - P1: Batch summary via Mongo $group (avoid N+1) for many projects
 - P1: Unique tukang name per project (or use worker_id in tx category) to avoid name collisions

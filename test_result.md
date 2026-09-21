@@ -101,3 +101,39 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Tambahkan fitur Backup Data Otomatis: ekspor cadangan data proyek (termasuk foto) agar bisa diunduh ke perangkat dan disimpan ke Google Drive. Fase 1: backup unduh ke perangkat (ZIP berisi data.json + data.xlsx + folder foto)."
+
+backend:
+  - task: "Backup export endpoints (/api/backup/summary & /api/backup/export)"
+    implemented: true
+    working: true
+    file: "backend/backup.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "New module backup.py gathers all user data (projects, transactions, workers, work_items, sub_items, progress_entries, files, orders) and builds a ZIP with data.json, data.xlsx (openpyxl, per-sheet) and photos/ folder (fetched from Emergent Object Storage via get_object). /api/backup/summary returns counts; /api/backup/export streams the ZIP (FileResponse + BackgroundTask cleanup, assembled in threadpool). Both require auth (Bearer/cookie). Demo user (read-only) should be ALLOWED since these are GET requests. Test: (1) unauth -> 401; (2) authenticated summary returns integer counts; (3) export returns application/zip with non-empty body and valid zip containing data.json+data.xlsx; (4) demo account can also export."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ ALL TESTS PASSED. Test results: (1) Unauthenticated GET /api/backup/summary correctly returns 401. (2) Authenticated GET /api/backup/summary returns 200 with valid JSON containing integer fields: projects=3, transactions=20, workers=5, work_items=8, progress_entries=11, photos=0. (3) Authenticated GET /api/backup/export returns 200 with Content-Type: application/zip, valid ZIP file (14029 bytes) containing data.json (20205 bytes, valid JSON with all collections), data.xlsx (10452 bytes, valid Excel with 5 sheets: Proyek, Transaksi, Tukang, Item Pekerjaan, Progress Lapangan), and manifest.json (357 bytes, valid JSON with counts and metadata). (4) Demo account (read-only, premium) successfully exports backup without being blocked. Note: photos=0 is CORRECT behavior - demo seed uses external URLs (Unsplash/Pexels) which are intentionally excluded from backup per design (backup.py line 62: skip URLs starting with 'http'). Only photos stored in Emergent Object Storage are included in backup. All data collections are properly exported and can be used for restore."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.2"
+  test_sequence: 2
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: "Please test the new backup endpoints only. Auth: you can create a session via POST /api/auth/demo (public, returns token) OR register/login. Use Bearer token. Verify /api/backup/summary returns counts and /api/backup/export returns a valid non-empty application/zip. Do NOT test payment/Midtrans or other existing flows."
+    -agent: "testing"
+    -message: "✅ Backup endpoints testing COMPLETE. All 3 tests passed (100% success rate). Endpoints working correctly: (1) Unauthenticated access properly blocked with 401, (2) Authenticated /api/backup/summary returns valid counts, (3) Authenticated /api/backup/export returns valid ZIP with data.json, data.xlsx, and manifest.json. Demo account (read-only) can successfully export. Note: photos=0 for demo is correct behavior (external URLs excluded by design). No backend errors found in logs. Ready for production use."
