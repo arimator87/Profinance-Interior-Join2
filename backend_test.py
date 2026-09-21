@@ -1,483 +1,358 @@
 #!/usr/bin/env python3
 """
-Backend API Test Suite for ProFinance Interior - NEW Backup Endpoints
-Tests per-project export, restore, stored backups, and cron endpoints.
+Backend test for ProFinance Interior - Promo Expiry + Announcement Theme
+Tests the promo countdown expiry and announcement theme backend changes.
 """
 import os
 import sys
 import json
-import zipfile
-import io
-import requests
+import httpx
 from datetime import datetime
+from pathlib import Path
+from pymongo import MongoClient
 
-# Base URL from frontend/.env
-BASE_URL = "https://interior-pro-63.preview.emergentagent.com/api"
-WEBHOOK_CRON_SECRET = "pf_cron_9x2Kv7Qr4mB1nZ6sL0aWd3Ht8Yc5Ep"
+# Load environment variables
+ROOT_DIR = Path(__file__).parent
+sys.path.insert(0, str(ROOT_DIR / "backend"))
 
-def log(msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+# Get configuration from environment
+BACKEND_URL = "https://interior-pro-63.preview.emergentagent.com/api"
+MONGO_URL = "mongodb://localhost:27017"
+DB_NAME = "test_database"
 
-def register_user():
-    """Register a new user and return token."""
-    email = f"test_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}@test.com"
-    password = "testpass123"
-    payload = {
-        "email": email,
-        "name": "Test Backup User",
-        "password": password,
-        "phone": "081234567890"
-    }
-    log(f"Registering user: {email}")
-    r = requests.post(f"{BASE_URL}/auth/register", json=payload, timeout=30)
-    log(f"  Status: {r.status_code}")
-    if r.status_code != 200:
-        log(f"  ERROR: {r.text}")
-        return None, None
-    data = r.json()
-    token = data.get("token")
-    log(f"  Token: {token[:20]}...")
-    return token, email
+# Test results
+test_results = []
 
-def create_project(token, name="Backup Test Proyek"):
-    """Create a project and return project id."""
-    headers = {"Authorization": f"Bearer {token}"}
-    payload = {
-        "name": name,
-        "owner": "Klien A",
-        "nominal": 100000000
-    }
-    log(f"Creating project: {name}")
-    r = requests.post(f"{BASE_URL}/projects", json=payload, headers=headers, timeout=30)
-    log(f"  Status: {r.status_code}")
-    if r.status_code != 200:
-        log(f"  ERROR: {r.text}")
-        return None
-    data = r.json()
-    project_id = data.get("id")
-    log(f"  Project ID: {project_id}")
-    return project_id
+def log_test(test_name, passed, details=""):
+    """Log test result"""
+    status = "✅ PASS" if passed else "❌ FAIL"
+    test_results.append({
+        "test": test_name,
+        "passed": passed,
+        "details": details
+    })
+    print(f"{status}: {test_name}")
+    if details:
+        print(f"  Details: {details}")
 
-def add_transaction(token, project_id):
-    """Add a transaction to the project."""
-    headers = {"Authorization": f"Bearer {token}"}
-    payload = {
-        "type": "in",
-        "amount": 5000000,
-        "category": "Termin",
-        "description": "DP"
-    }
-    log(f"Adding transaction to project {project_id}")
-    r = requests.post(f"{BASE_URL}/projects/{project_id}/transactions", json=payload, headers=headers, timeout=30)
-    log(f"  Status: {r.status_code}")
-    if r.status_code != 200:
-        log(f"  ERROR: {r.text}")
-        return None
-    data = r.json()
-    log(f"  Transaction ID: {data.get('id')}")
-    return data.get("id")
+def get_mongo_client():
+    """Get MongoDB client"""
+    return MongoClient(MONGO_URL)
 
-def test_per_project_export(token, project_id):
-    """Test GET /api/projects/{id}/backup/export."""
-    log("\n=== TEST: Per-Project Backup Export ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    r = requests.get(f"{BASE_URL}/projects/{project_id}/backup/export", headers=headers, timeout=60)
-    log(f"Status: {r.status_code}")
-    log(f"Content-Type: {r.headers.get('Content-Type')}")
-    log(f"Content-Length: {len(r.content)} bytes")
-    
-    if r.status_code != 200:
-        log(f"❌ FAILED: Expected 200, got {r.status_code}")
-        log(f"Response: {r.text}")
-        return None
-    
-    if "application/zip" not in r.headers.get("Content-Type", ""):
-        log(f"❌ FAILED: Expected application/zip, got {r.headers.get('Content-Type')}")
-        return None
-    
-    if len(r.content) == 0:
-        log(f"❌ FAILED: ZIP file is empty")
-        return None
-    
-    # Verify ZIP contents
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(r.content))
-        files = zf.namelist()
-        log(f"ZIP contains {len(files)} files:")
-        for f in files:
-            info = zf.getinfo(f)
-            log(f"  - {f} ({info.file_size} bytes)")
-        
-        # Check required files
-        required = ["data.json", "data.xlsx", "manifest.json"]
-        for req in required:
-            if req not in files:
-                log(f"❌ FAILED: Missing required file: {req}")
-                return None
-        
-        # Verify data.json contains exactly 1 project
-        data_json = json.loads(zf.read("data.json").decode("utf-8"))
-        projects = data_json.get("projects", [])
-        log(f"data.json contains {len(projects)} project(s)")
-        if len(projects) != 1:
-            log(f"❌ FAILED: Expected 1 project, got {len(projects)}")
-            return None
-        
-        if projects[0].get("id") != project_id:
-            log(f"❌ FAILED: Project ID mismatch")
-            return None
-        
-        log(f"✅ PASSED: Per-project export working correctly")
-        return r.content
-    except Exception as e:
-        log(f"❌ FAILED: Error reading ZIP: {e}")
-        return None
+def backup_settings():
+    """Backup current settings to verify restoration"""
+    client = get_mongo_client()
+    db = client[DB_NAME]
+    settings = db.settings.find_one({"id": "app_settings"}, {"_id": 0})
+    client.close()
+    return settings
 
-def test_manual_backup_run(token):
-    """Test POST /api/backup/run."""
-    log("\n=== TEST: Manual Stored Backup ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    r = requests.post(f"{BASE_URL}/backup/run", headers=headers, timeout=60)
-    log(f"Status: {r.status_code}")
+def restore_settings_from_snapshot():
+    """Restore settings from snapshot file"""
+    snapshot_path = ROOT_DIR / "memory" / "settings_backup.json"
+    with open(snapshot_path, 'r') as f:
+        snapshot = json.load(f)
     
-    if r.status_code != 200:
-        log(f"❌ FAILED: Expected 200, got {r.status_code}")
-        log(f"Response: {r.text}")
-        return None
+    client = get_mongo_client()
+    db = client[DB_NAME]
     
-    data = r.json()
-    log(f"Response: {json.dumps(data, indent=2)}")
-    
-    # Verify required fields
-    required_fields = ["id", "filename", "size", "counts", "createdAt", "kind"]
-    for field in required_fields:
-        if field not in data:
-            log(f"❌ FAILED: Missing field: {field}")
-            return None
-    
-    if data.get("kind") != "manual":
-        log(f"❌ FAILED: Expected kind='manual', got {data.get('kind')}")
-        return None
-    
-    counts = data.get("counts", {})
-    required_counts = ["projects", "transactions", "photos"]
-    for field in required_counts:
-        if field not in counts:
-            log(f"❌ FAILED: Missing counts field: {field}")
-            return None
-    
-    log(f"✅ PASSED: Manual backup created successfully")
-    return data.get("id")
+    # Replace the entire document (except _id)
+    db.settings.replace_one(
+        {"id": "app_settings"},
+        snapshot,
+        upsert=True
+    )
+    client.close()
+    return snapshot
 
-def test_list_backups(token, expected_backup_id):
-    """Test GET /api/backups."""
-    log("\n=== TEST: List Stored Backups ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    r = requests.get(f"{BASE_URL}/backups", headers=headers, timeout=30)
-    log(f"Status: {r.status_code}")
-    
-    if r.status_code != 200:
-        log(f"❌ FAILED: Expected 200, got {r.status_code}")
-        log(f"Response: {r.text}")
-        return False
-    
-    data = r.json()
-    log(f"Found {len(data)} backup(s)")
-    
-    # Check if expected backup is in the list
-    found = False
-    for backup in data:
-        if backup.get("id") == expected_backup_id:
-            found = True
-            log(f"Found expected backup: {backup.get('filename')}")
-            break
-    
-    if not found:
-        log(f"❌ FAILED: Expected backup {expected_backup_id} not found in list")
-        return False
-    
-    log(f"✅ PASSED: List backups working correctly")
-    return True
+def update_settings(updates):
+    """Update settings in MongoDB"""
+    client = get_mongo_client()
+    db = client[DB_NAME]
+    db.settings.update_one(
+        {"id": "app_settings"},
+        {"$set": updates},
+        upsert=True
+    )
+    client.close()
 
-def test_download_backup(token, backup_id):
-    """Test GET /api/backups/{id}/download."""
-    log("\n=== TEST: Download Stored Backup ===")
-    r = requests.get(f"{BASE_URL}/backups/{backup_id}/download?auth={token}", timeout=60)
-    log(f"Status: {r.status_code}")
-    log(f"Content-Type: {r.headers.get('Content-Type')}")
-    log(f"Content-Length: {len(r.content)} bytes")
-    
-    if r.status_code != 200:
-        log(f"❌ FAILED: Expected 200, got {r.status_code}")
-        log(f"Response: {r.text}")
-        return False
-    
-    if "application/zip" not in r.headers.get("Content-Type", ""):
-        log(f"❌ FAILED: Expected application/zip, got {r.headers.get('Content-Type')}")
-        return False
-    
-    if len(r.content) == 0:
-        log(f"❌ FAILED: ZIP file is empty")
-        return False
-    
-    # Verify it's a valid ZIP
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(r.content))
-        files = zf.namelist()
-        log(f"ZIP contains {len(files)} files")
-        log(f"✅ PASSED: Download backup working correctly")
-        return True
-    except Exception as e:
-        log(f"❌ FAILED: Invalid ZIP file: {e}")
-        return False
+def register_user(email, password="testpass123"):
+    """Register a new user"""
+    response = httpx.post(
+        f"{BACKEND_URL}/auth/register",
+        json={
+            "email": email,
+            "name": "Test User",
+            "password": password,
+            "phone": ""
+        },
+        timeout=30
+    )
+    return response
 
-def test_restore(token, zip_bytes, project_id):
-    """Test POST /api/backup/restore - the key feature."""
-    log("\n=== TEST: Restore from ZIP ===")
-    
-    # Step 1: Delete the project
-    log("Step 1: Deleting project...")
-    headers = {"Authorization": f"Bearer {token}"}
-    r = requests.delete(f"{BASE_URL}/projects/{project_id}", headers=headers, timeout=30)
-    log(f"  Delete status: {r.status_code}")
-    if r.status_code != 200:
-        log(f"❌ FAILED: Could not delete project")
-        return False
-    
-    # Step 2: Verify project is gone
-    log("Step 2: Verifying project is deleted...")
-    r = requests.get(f"{BASE_URL}/projects", headers=headers, timeout=30)
-    if r.status_code == 200:
-        projects = r.json()
-        for p in projects:
-            if p.get("id") == project_id:
-                log(f"❌ FAILED: Project still exists after deletion")
-                return False
-        log(f"  ✓ Project successfully deleted")
-    
-    # Step 3: Restore from ZIP
-    log("Step 3: Restoring from ZIP...")
-    files = {"file": ("backup.zip", zip_bytes, "application/zip")}
-    r = requests.post(f"{BASE_URL}/backup/restore", files=files, headers=headers, timeout=60)
-    log(f"  Restore status: {r.status_code}")
-    
-    if r.status_code != 200:
-        log(f"❌ FAILED: Expected 200, got {r.status_code}")
-        log(f"Response: {r.text}")
-        return False
-    
-    data = r.json()
-    log(f"  Response: {json.dumps(data, indent=2)}")
-    
-    if data.get("restored_projects", 0) < 1:
-        log(f"❌ FAILED: Expected restored_projects >= 1, got {data.get('restored_projects')}")
-        return False
-    
-    if data.get("restored_transactions", 0) < 1:
-        log(f"❌ FAILED: Expected restored_transactions >= 1, got {data.get('restored_transactions')}")
-        return False
-    
-    # Step 4: Verify project reappears
-    log("Step 4: Verifying project is restored...")
-    r = requests.get(f"{BASE_URL}/projects", headers=headers, timeout=30)
-    if r.status_code != 200:
-        log(f"❌ FAILED: Could not list projects")
-        return False
-    
-    projects = r.json()
-    found = False
-    for p in projects:
-        if p.get("id") == project_id and p.get("name") == "Backup Test Proyek":
-            found = True
-            log(f"  ✓ Project restored: {p.get('name')}")
-            break
-    
-    if not found:
-        log(f"❌ FAILED: Restored project not found in project list")
-        return False
-    
-    # Step 5: Verify transactions are restored
-    log("Step 5: Verifying transactions are restored...")
-    r = requests.get(f"{BASE_URL}/projects/{project_id}/transactions", headers=headers, timeout=30)
-    if r.status_code != 200:
-        log(f"❌ FAILED: Could not list transactions")
-        return False
-    
-    transactions = r.json()
-    if len(transactions) < 1:
-        log(f"❌ FAILED: No transactions found after restore")
-        return False
-    
-    log(f"  ✓ Found {len(transactions)} transaction(s)")
-    
-    # Step 6: Test idempotency - restore again with same ZIP
-    log("Step 6: Testing idempotency (restore again)...")
-    files = {"file": ("backup.zip", zip_bytes, "application/zip")}
-    r = requests.post(f"{BASE_URL}/backup/restore", files=files, headers=headers, timeout=60)
-    log(f"  Second restore status: {r.status_code}")
-    
-    if r.status_code != 200:
-        log(f"❌ FAILED: Second restore failed")
-        return False
-    
-    data = r.json()
-    log(f"  Response: {json.dumps(data, indent=2)}")
-    
-    if data.get("restored_projects", 0) != 0:
-        log(f"❌ FAILED: Expected restored_projects=0 (idempotent), got {data.get('restored_projects')}")
-        return False
-    
-    if data.get("skipped_projects", 0) < 1:
-        log(f"❌ FAILED: Expected skipped_projects >= 1, got {data.get('skipped_projects')}")
-        return False
-    
-    log(f"✅ PASSED: Restore working correctly (including idempotency)")
-    return True
+def get_orders(token):
+    """Get user orders"""
+    response = httpx.get(
+        f"{BACKEND_URL}/subscription/orders",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30
+    )
+    return response
 
-def test_demo_block():
-    """Test that demo user gets 403 on POST /api/backup/run."""
-    log("\n=== TEST: Demo User Block ===")
-    r = requests.post(f"{BASE_URL}/auth/demo", timeout=30)
-    if r.status_code != 200:
-        log(f"❌ FAILED: Could not get demo token")
-        return False
-    
-    demo_token = r.json().get("token")
-    log(f"Got demo token: {demo_token[:20]}...")
-    
-    headers = {"Authorization": f"Bearer {demo_token}"}
-    r = requests.post(f"{BASE_URL}/backup/run", headers=headers, timeout=30)
-    log(f"Status: {r.status_code}")
-    
-    if r.status_code != 403:
-        log(f"❌ FAILED: Expected 403, got {r.status_code}")
-        log(f"Response: {r.text}")
-        return False
-    
-    log(f"✅ PASSED: Demo user correctly blocked on POST /api/backup/run")
-    return True
-
-def test_cron_auth():
-    """Test POST /api/cron/weekly-backup authentication."""
-    log("\n=== TEST: Cron Endpoint Authentication ===")
-    
-    # Test without auth
-    log("Testing without auth...")
-    r = requests.post(f"{BASE_URL}/cron/weekly-backup", timeout=30)
-    log(f"  Status: {r.status_code}")
-    if r.status_code != 401:
-        log(f"❌ FAILED: Expected 401, got {r.status_code}")
-        return False
-    log(f"  ✓ Correctly returns 401 without auth")
-    
-    # Test with correct auth
-    log("Testing with correct auth...")
-    headers = {"Authorization": f"Bearer {WEBHOOK_CRON_SECRET}"}
-    r = requests.post(f"{BASE_URL}/cron/weekly-backup", headers=headers, timeout=30)
-    log(f"  Status: {r.status_code}")
-    if r.status_code != 200:
-        log(f"❌ FAILED: Expected 200, got {r.status_code}")
-        log(f"Response: {r.text}")
-        return False
-    
-    data = r.json()
-    log(f"  Response: {json.dumps(data, indent=2)}")
-    
-    if not data.get("ok") or not data.get("queued"):
-        log(f"❌ FAILED: Expected ok=true and queued=true")
-        return False
-    
-    log(f"✅ PASSED: Cron authentication working correctly")
-    return True
+def checkout(token, plan):
+    """Create checkout"""
+    response = httpx.post(
+        f"{BACKEND_URL}/subscription/checkout",
+        json={"plan": plan},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30
+    )
+    return response
 
 def main():
-    log("=" * 80)
-    log("ProFinance Interior - NEW Backup Endpoints Test Suite")
-    log("=" * 80)
+    print("=" * 80)
+    print("ProFinance Interior - Promo Expiry + Announcement Theme Backend Tests")
+    print("=" * 80)
+    print()
     
-    results = {
-        "passed": [],
-        "failed": []
-    }
+    # Load snapshot for comparison
+    snapshot_path = ROOT_DIR / "memory" / "settings_backup.json"
+    with open(snapshot_path, 'r') as f:
+        snapshot = json.load(f)
     
-    # Step 1: Register user
-    token, email = register_user()
-    if not token:
-        log("❌ CRITICAL: Could not register user")
-        sys.exit(1)
+    print(f"Loaded settings snapshot: {json.dumps(snapshot, indent=2)}")
+    print()
     
-    # Step 2: Create project
-    project_id = create_project(token)
-    if not project_id:
-        log("❌ CRITICAL: Could not create project")
-        sys.exit(1)
+    # TEST 1: GET /api/settings/public (no auth) - verify new fields
+    print("\n--- TEST 1: GET /api/settings/public (no auth) ---")
+    try:
+        response = httpx.get(f"{BACKEND_URL}/settings/public", timeout=30)
+        if response.status_code == 200:
+            data = response.json()
+            required_fields = ["promoEndsAt", "announcementTheme", "serverNow"]
+            legacy_fields = ["announcement", "monthlyPrice", "monthlyPromo", "yearlyPrice", "yearlyPromo", "promoActive"]
+            
+            missing_fields = [f for f in required_fields if f not in data]
+            missing_legacy = [f for f in legacy_fields if f not in data]
+            
+            if not missing_fields and not missing_legacy:
+                # Verify serverNow is a valid ISO timestamp
+                try:
+                    datetime.fromisoformat(data["serverNow"].replace("Z", "+00:00"))
+                    log_test(
+                        "GET /api/settings/public includes all required fields",
+                        True,
+                        f"Status: {response.status_code}, Fields: promoEndsAt={data.get('promoEndsAt')}, announcementTheme={data.get('announcementTheme')}, serverNow={data.get('serverNow')}, announcement={data.get('announcement')}, monthlyPrice={data.get('monthlyPrice')}"
+                    )
+                except Exception as e:
+                    log_test(
+                        "GET /api/settings/public includes all required fields",
+                        False,
+                        f"serverNow is not a valid ISO timestamp: {data.get('serverNow')}, error: {e}"
+                    )
+            else:
+                log_test(
+                    "GET /api/settings/public includes all required fields",
+                    False,
+                    f"Missing fields: {missing_fields + missing_legacy}"
+                )
+        else:
+            log_test(
+                "GET /api/settings/public includes all required fields",
+                False,
+                f"Status: {response.status_code}, Body: {response.text}"
+            )
+    except Exception as e:
+        log_test("GET /api/settings/public includes all required fields", False, f"Exception: {e}")
     
-    # Step 3: Add transaction
-    tx_id = add_transaction(token, project_id)
-    if not tx_id:
-        log("❌ CRITICAL: Could not add transaction")
-        sys.exit(1)
+    # TEST 2: EXPIRED PROMO - Update settings with past date
+    print("\n--- TEST 2: EXPIRED PROMO (past promoEndsAt) ---")
+    try:
+        # Update settings with expired promo
+        update_settings({
+            "promoActive": True,
+            "monthlyPrice": 350000,
+            "monthlyPromo": 149000,
+            "promoEndsAt": "2020-01-01T00:00:00+00:00"
+        })
+        print("Updated settings: promoActive=True, monthlyPrice=350000, monthlyPromo=149000, promoEndsAt=2020-01-01T00:00:00+00:00")
+        
+        # Register a new user
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        test_email = f"test_promo_expired_{timestamp}@test.com"
+        reg_response = register_user(test_email)
+        
+        if reg_response.status_code == 200:
+            token = reg_response.json()["token"]
+            print(f"Registered user: {test_email}")
+            
+            # Checkout monthly plan
+            checkout_response = checkout(token, "monthly")
+            print(f"Checkout response: {checkout_response.status_code}")
+            
+            # Accept both 200 (success) and 502 (Midtrans external error)
+            if checkout_response.status_code in [200, 502]:
+                # Get orders to verify gross_amount
+                orders_response = get_orders(token)
+                if orders_response.status_code == 200:
+                    orders = orders_response.json()
+                    # Find the latest monthly order
+                    monthly_orders = [o for o in orders if o.get("plan") == "monthly"]
+                    if monthly_orders:
+                        latest_order = monthly_orders[0]  # Already sorted by created_at desc
+                        gross_amount = latest_order.get("gross_amount")
+                        
+                        if gross_amount == 350000:
+                            log_test(
+                                "Expired promo uses base price (350000)",
+                                True,
+                                f"Order {latest_order.get('order_id')}: gross_amount={gross_amount} (expected 350000 for expired promo)"
+                            )
+                        else:
+                            log_test(
+                                "Expired promo uses base price (350000)",
+                                False,
+                                f"Order {latest_order.get('order_id')}: gross_amount={gross_amount}, expected 350000"
+                            )
+                    else:
+                        log_test("Expired promo uses base price (350000)", False, "No monthly orders found")
+                else:
+                    log_test("Expired promo uses base price (350000)", False, f"Failed to get orders: {orders_response.status_code}")
+            elif checkout_response.status_code == 500:
+                log_test("Expired promo uses base price (350000)", False, f"Backend returned 500 error: {checkout_response.text}")
+            else:
+                log_test("Expired promo uses base price (350000)", False, f"Checkout failed with status {checkout_response.status_code}: {checkout_response.text}")
+        else:
+            log_test("Expired promo uses base price (350000)", False, f"Failed to register user: {reg_response.status_code}")
+    except Exception as e:
+        log_test("Expired promo uses base price (350000)", False, f"Exception: {e}")
     
-    # Test 1: Per-project export
-    zip_bytes = test_per_project_export(token, project_id)
-    if zip_bytes:
-        results["passed"].append("Per-project backup export")
+    # TEST 3: LIVE PROMO - Update settings with future date
+    print("\n--- TEST 3: LIVE PROMO (future promoEndsAt) ---")
+    try:
+        # Update settings with live promo
+        update_settings({
+            "promoActive": True,
+            "monthlyPrice": 350000,
+            "monthlyPromo": 149000,
+            "promoEndsAt": "2099-12-31T23:59:59+00:00"
+        })
+        print("Updated settings: promoActive=True, monthlyPrice=350000, monthlyPromo=149000, promoEndsAt=2099-12-31T23:59:59+00:00")
+        
+        # Use the same user from TEST 2
+        if 'token' in locals():
+            # Checkout monthly plan again
+            checkout_response = checkout(token, "monthly")
+            print(f"Checkout response: {checkout_response.status_code}")
+            
+            # Accept both 200 (success) and 502 (Midtrans external error)
+            if checkout_response.status_code in [200, 502]:
+                # Get orders to verify gross_amount
+                orders_response = get_orders(token)
+                if orders_response.status_code == 200:
+                    orders = orders_response.json()
+                    # Find the latest monthly order (should be the second one)
+                    monthly_orders = [o for o in orders if o.get("plan") == "monthly"]
+                    if len(monthly_orders) >= 2:
+                        latest_order = monthly_orders[0]  # First in list (most recent)
+                        gross_amount = latest_order.get("gross_amount")
+                        
+                        if gross_amount == 149000:
+                            log_test(
+                                "Live promo uses promo price (149000)",
+                                True,
+                                f"Order {latest_order.get('order_id')}: gross_amount={gross_amount} (expected 149000 for live promo)"
+                            )
+                        else:
+                            log_test(
+                                "Live promo uses promo price (149000)",
+                                False,
+                                f"Order {latest_order.get('order_id')}: gross_amount={gross_amount}, expected 149000"
+                            )
+                    else:
+                        log_test("Live promo uses promo price (149000)", False, f"Expected 2 monthly orders, found {len(monthly_orders)}")
+                else:
+                    log_test("Live promo uses promo price (149000)", False, f"Failed to get orders: {orders_response.status_code}")
+            elif checkout_response.status_code == 500:
+                log_test("Live promo uses promo price (149000)", False, f"Backend returned 500 error: {checkout_response.text}")
+            else:
+                log_test("Live promo uses promo price (149000)", False, f"Checkout failed with status {checkout_response.status_code}: {checkout_response.text}")
+        else:
+            log_test("Live promo uses promo price (149000)", False, "No token available from TEST 2")
+    except Exception as e:
+        log_test("Live promo uses promo price (149000)", False, f"Exception: {e}")
+    
+    # TEST 4: RESTORE SETTINGS from snapshot
+    print("\n--- TEST 4: RESTORE SETTINGS from snapshot ---")
+    try:
+        # Restore settings from snapshot
+        restored = restore_settings_from_snapshot()
+        print(f"Restored settings from snapshot: {json.dumps(restored, indent=2)}")
+        
+        # Verify restoration by getting public settings
+        response = httpx.get(f"{BACKEND_URL}/settings/public", timeout=30)
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Check that all snapshot fields match
+            mismatches = []
+            for key, value in snapshot.items():
+                if key == "id":
+                    continue  # Skip id field
+                if data.get(key) != value:
+                    mismatches.append(f"{key}: got {data.get(key)}, expected {value}")
+            
+            # Check that promoEndsAt is empty or not present (as in snapshot)
+            if "promoEndsAt" in snapshot:
+                # If snapshot has promoEndsAt, it should match
+                if data.get("promoEndsAt") != snapshot["promoEndsAt"]:
+                    mismatches.append(f"promoEndsAt: got {data.get('promoEndsAt')}, expected {snapshot['promoEndsAt']}")
+            else:
+                # If snapshot doesn't have promoEndsAt, the restored value should be empty or default
+                promo_ends = data.get("promoEndsAt", "")
+                if promo_ends and promo_ends != "":
+                    mismatches.append(f"promoEndsAt: got {promo_ends}, expected empty/absent (snapshot has no promoEndsAt)")
+            
+            if not mismatches:
+                log_test(
+                    "Settings restored from snapshot",
+                    True,
+                    f"All fields match snapshot. announcement={data.get('announcement')}, monthlyPrice={data.get('monthlyPrice')}, monthlyPromo={data.get('monthlyPromo')}, yearlyPrice={data.get('yearlyPrice')}, yearlyPromo={data.get('yearlyPromo')}, promoActive={data.get('promoActive')}, promoEndsAt={data.get('promoEndsAt')}"
+                )
+            else:
+                log_test(
+                    "Settings restored from snapshot",
+                    False,
+                    f"Mismatches: {', '.join(mismatches)}"
+                )
+        else:
+            log_test("Settings restored from snapshot", False, f"Failed to get public settings: {response.status_code}")
+    except Exception as e:
+        log_test("Settings restored from snapshot", False, f"Exception: {e}")
+    
+    # Print summary
+    print("\n" + "=" * 80)
+    print("TEST SUMMARY")
+    print("=" * 80)
+    
+    passed = sum(1 for r in test_results if r["passed"])
+    total = len(test_results)
+    
+    for result in test_results:
+        status = "✅ PASS" if result["passed"] else "❌ FAIL"
+        print(f"{status}: {result['test']}")
+        if result["details"]:
+            print(f"  {result['details']}")
+    
+    print()
+    print(f"Total: {passed}/{total} tests passed")
+    
+    if passed == total:
+        print("\n🎉 ALL TESTS PASSED!")
+        return 0
     else:
-        results["failed"].append("Per-project backup export")
-    
-    # Test 2: Manual backup run
-    backup_id = test_manual_backup_run(token)
-    if backup_id:
-        results["passed"].append("Manual stored backup")
-    else:
-        results["failed"].append("Manual stored backup")
-    
-    # Test 3: List backups
-    if backup_id and test_list_backups(token, backup_id):
-        results["passed"].append("List stored backups")
-    else:
-        results["failed"].append("List stored backups")
-    
-    # Test 4: Download backup
-    if backup_id and test_download_backup(token, backup_id):
-        results["passed"].append("Download stored backup")
-    else:
-        results["failed"].append("Download stored backup")
-    
-    # Test 5: Restore (the key feature)
-    if zip_bytes and test_restore(token, zip_bytes, project_id):
-        results["passed"].append("Restore from ZIP")
-    else:
-        results["failed"].append("Restore from ZIP")
-    
-    # Test 6: Demo block
-    if test_demo_block():
-        results["passed"].append("Demo user block")
-    else:
-        results["failed"].append("Demo user block")
-    
-    # Test 7: Cron auth
-    if test_cron_auth():
-        results["passed"].append("Cron authentication")
-    else:
-        results["failed"].append("Cron authentication")
-    
-    # Summary
-    log("\n" + "=" * 80)
-    log("TEST SUMMARY")
-    log("=" * 80)
-    log(f"✅ PASSED: {len(results['passed'])} tests")
-    for test in results["passed"]:
-        log(f"  ✓ {test}")
-    
-    if results["failed"]:
-        log(f"\n❌ FAILED: {len(results['failed'])} tests")
-        for test in results["failed"]:
-            log(f"  ✗ {test}")
-        sys.exit(1)
-    else:
-        log("\n🎉 ALL TESTS PASSED!")
-        sys.exit(0)
+        print(f"\n⚠️  {total - passed} test(s) failed")
+        return 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

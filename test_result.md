@@ -127,10 +127,26 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Promo countdown expiry + announcement theme"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend_promo2:
+  - task: "Promo countdown expiry + announcement theme"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Settings add promoEndsAt (ISO, empty=no expiry) + announcementTheme (info/promo/warning, pydantic Literal validated). _promo_active() treats promo as off once now>promoEndsAt; checkout uses _promo_active so expired promo charges base price. /api/settings/public adds promoEndsAt, announcementTheme, serverNow. Frontend: countdown timer on Pricing (server-offset corrected), theme-colored announcement banner in Header, theme picker + promo end datetime input in AdminSettings."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ ALL TESTS PASSED (4/4). Test results: (1) GET /api/settings/public (no auth) -> 200, includes all required fields: promoEndsAt='', announcementTheme='info', serverNow='2026-09-21T12:18:51.806728+00:00' (valid ISO timestamp), plus legacy fields (announcement='Promo Launching WEB ProFinance Interior 50%', monthlyPrice=350000, monthlyPromo=149000, yearlyPrice=4200000, yearlyPromo=1590000, promoActive=true). (2) EXPIRED PROMO: Updated db.settings with promoActive=true, monthlyPrice=350000, monthlyPromo=149000, promoEndsAt='2020-01-01T00:00:00+00:00' (past date). Registered user test_promo_expired_20260921121851@test.com, POST /api/subscription/checkout {plan:'monthly'} -> 200 (Midtrans accepted). GET /api/subscription/orders -> latest monthly order gross_amount=350000 (CORRECT: expired promo falls back to base price). (3) LIVE PROMO: Updated promoEndsAt='2099-12-31T23:59:59+00:00' (future date). Same user checkout monthly again -> 200. GET /api/subscription/orders -> NEW monthly order gross_amount=149000 (CORRECT: live promo uses promo price). (4) RESTORE: Restored db.settings from /app/memory/settings_backup.json (full replace). GET /api/settings/public confirmed all fields match snapshot: announcement='Promo Launching WEB ProFinance Interior 50%', monthlyPrice=350000, monthlyPromo=149000, yearlyPrice=4200000, yearlyPromo=1590000, promoActive=true, promoEndsAt='' (empty as in snapshot - snapshot has no promoEndsAt field). Settings successfully restored. No 500 errors, backend logs clean. Promo expiry logic working perfectly."
 
 backend_pricing:
   - task: "Admin pricing/promo settings + public + checkout amount"
@@ -197,3 +213,7 @@ agent_communication:
     -message: "Round 4: Test admin pricing/promo. (1) GET /api/settings/public -> confirm returns monthlyPrice, monthlyPromo, yearlyPrice, yearlyPromo, promoActive (defaults 149000/149000/1290000/1290000/false). (2) Register a NORMAL user (non-admin) -> GET /api/admin/settings and PUT /api/admin/settings must return 403. (3) Register a normal user, POST /api/subscription/checkout {plan:'monthly'} then {plan:'yearly'}; Midtrans is production/external so a 200(token) OR 502 are both acceptable - the point is NO 500 from our code. Then GET /api/subscription/orders and confirm the created orders have gross_amount == 149000 (monthly) and 1290000 (yearly) i.e. amount is derived from settings defaults. Do NOT fail the task if Midtrans itself returns 502; only fail on 500/crash in our code or wrong gross_amount. Do not test unrelated flows."
     -agent: "testing"
     -message: "✅ ALL ADMIN PRICING/PROMO TESTS PASSED. Executed 4 test cases: (1) GET /api/settings/public (no auth) -> 200, returned all required fields (monthlyPrice=149000, monthlyPromo=149000, yearlyPrice=1290000, yearlyPromo=1290000, promoActive=false) plus legacy fields (appName, announcement). All defaults match specification. (2) Admin guard GET: Registered normal user, GET /api/admin/settings -> 403 (correctly blocked). (3) Admin guard PUT: Same user, PUT /api/admin/settings {promoActive:true} -> 403 (correctly blocked). (4) Checkout amount derivation: POST /api/subscription/checkout for monthly and yearly plans both returned 200 (Midtrans accepted), GET /api/subscription/orders confirmed gross_amount=149000 (monthly) and 1290000 (yearly) - amounts correctly derived from settings. No 500 errors, no backend crashes, logs clean. Feature working perfectly."
+    -agent: "main"
+    -message: "Round 5: Test promo expiry + announcement theme. IMPORTANT: the owner has LIVE settings - a snapshot is saved at /app/memory/settings_backup.json. You may temporarily modify MongoDB db.settings (id=app_settings) for testing but MUST restore it exactly afterward using that snapshot file. Tests: (1) GET /api/settings/public -> must include promoEndsAt, announcementTheme, serverNow (ISO). (2) Promo expiry: set promoActive=true, monthlyPrice=350000, monthlyPromo=149000, promoEndsAt=<PAST date e.g. 2020-01-01T00:00:00+00:00>; register normal user, POST /api/subscription/checkout {plan:'monthly'}; then GET /api/subscription/orders and confirm gross_amount == 350000 (expired promo -> base price). (3) Set promoEndsAt=<FUTURE date e.g. 2099-12-31T23:59:59+00:00>, checkout monthly again -> confirm new order gross_amount == 149000 (live promo -> promo price). Midtrans may return 200 or 502, both fine; only fail on our 500 or wrong gross_amount. (4) Restore settings from /app/memory/settings_backup.json and GET /api/settings/public to confirm restored. Report status codes + gross_amounts."
+    -agent: "testing"
+    -message: "✅ ALL PROMO EXPIRY + ANNOUNCEMENT THEME TESTS PASSED (4/4). Comprehensive test suite executed: (1) GET /api/settings/public (no auth) -> 200, confirmed all new fields present: promoEndsAt, announcementTheme='info', serverNow (valid ISO timestamp), plus all legacy fields. (2) EXPIRED PROMO TEST: Set promoEndsAt='2020-01-01T00:00:00+00:00' (past), registered user, checkout monthly -> 200, verified gross_amount=350000 (base price, expired promo correctly ignored). (3) LIVE PROMO TEST: Set promoEndsAt='2099-12-31T23:59:59+00:00' (future), same user checkout monthly again -> 200, verified NEW order gross_amount=149000 (promo price, live promo correctly applied). (4) SETTINGS RESTORATION: Restored db.settings from /app/memory/settings_backup.json, verified all fields match snapshot including promoEndsAt='' (empty as in original). No 500 errors, no backend crashes, logs clean. Promo expiry logic (_promo_active function) working perfectly - correctly compares server time with promoEndsAt to determine if promo is active. Feature ready for production."

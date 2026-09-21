@@ -11,7 +11,7 @@ import secrets
 import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Literal
 from urllib.parse import quote
 
 from openpyxl import load_workbook, Workbook
@@ -437,9 +437,9 @@ async def create_checkout(body: CheckoutIn, user: dict = Depends(get_current_use
         raise HTTPException(status_code=400, detail="Paket tidak valid")
     if not MIDTRANS_SERVER_KEY:
         raise HTTPException(status_code=500, detail="Pembayaran belum dikonfigurasi")
-    # Resolve price from admin settings (supports promo pricing)
+    # Resolve price from admin settings (supports promo pricing + promo expiry)
     settings = await _get_settings()
-    promo_active = bool(settings.get("promoActive"))
+    promo_active = _promo_active(settings)
     if body.plan == "monthly":
         amount = _effective_price(settings.get("monthlyPrice", plan["amount"]),
                                   settings.get("monthlyPromo", 0), promo_active)
@@ -565,6 +565,8 @@ DEFAULT_SETTINGS = {
     "yearlyPrice": 1290000,
     "yearlyPromo": 1290000,
     "promoActive": False,
+    "promoEndsAt": "",
+    "announcementTheme": "info",
 }
 
 
@@ -573,12 +575,14 @@ class SettingsIn(BaseModel):
     supportEmail: Optional[str] = None
     supportWhatsapp: Optional[str] = None
     announcement: Optional[str] = None
+    announcementTheme: Optional[Literal["info", "promo", "warning"]] = None
     maintenanceMode: Optional[bool] = None
     monthlyPrice: Optional[int] = None
     monthlyPromo: Optional[int] = None
     yearlyPrice: Optional[int] = None
     yearlyPromo: Optional[int] = None
     promoActive: Optional[bool] = None
+    promoEndsAt: Optional[str] = None
 
 
 async def require_admin(user: dict = Depends(get_current_user)):
@@ -612,10 +616,26 @@ async def update_admin_settings(body: SettingsIn, user: dict = Depends(require_a
 async def public_settings():
     s = await _get_settings()
     keys = (
-        "appName", "announcement", "maintenanceMode", "supportWhatsapp", "supportEmail",
-        "monthlyPrice", "monthlyPromo", "yearlyPrice", "yearlyPromo", "promoActive",
+        "appName", "announcement", "announcementTheme", "maintenanceMode", "supportWhatsapp", "supportEmail",
+        "monthlyPrice", "monthlyPromo", "yearlyPrice", "yearlyPromo", "promoActive", "promoEndsAt",
     )
-    return {k: s[k] for k in keys}
+    return {**{k: s[k] for k in keys}, "serverNow": now_iso()}
+
+
+def _promo_active(settings: dict) -> bool:
+    """Promo counts only when toggled on AND not past its end date (empty end date = no expiry)."""
+    if not settings.get("promoActive"):
+        return False
+    ends = (settings.get("promoEndsAt") or "").strip()
+    if not ends:
+        return True
+    try:
+        end_dt = datetime.fromisoformat(ends.replace("Z", "+00:00"))
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) < end_dt
+    except Exception:
+        return True  # unparseable date -> respect the toggle as-is
 
 
 def _effective_price(base: int, promo: int, promo_active: bool) -> int:

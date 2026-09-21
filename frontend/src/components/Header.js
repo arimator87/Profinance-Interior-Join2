@@ -10,15 +10,27 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, PlayCircle, Receipt, BellRing, Settings, Users, Megaphone } from "lucide-react";
 import { toast } from "sonner";
 
+const BANNER_THEMES = {
+  info: "bg-blue-600 text-white",
+  promo: "bg-slate-900 text-amber-50",
+  warning: "bg-red-600 text-white",
+};
+
 export function Header() {
   const { user, logout, isPremium, isDemo, isAdmin } = useAuth();
   const navigate = useNavigate();
   const [announcement, setAnnouncement] = useState("");
+  const [annTheme, setAnnTheme] = useState("info");
 
   useEffect(() => {
     let active = true;
     api.get("/settings/public")
-      .then((r) => { if (active) setAnnouncement((r.data?.announcement || "").trim()); })
+      .then((r) => {
+        if (active) {
+          setAnnouncement((r.data?.announcement || "").trim());
+          setAnnTheme(r.data?.announcementTheme || "info");
+        }
+      })
       .catch(() => {});
     return () => { active = false; };
   }, []);
@@ -36,8 +48,8 @@ export function Header() {
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur-xl">
       {announcement && (
-        <div data-testid="announcement-banner" className="bg-slate-900 text-amber-50 text-xs sm:text-sm px-4 py-2 flex items-center justify-center gap-2 text-center">
-          <Megaphone className="w-4 h-4 shrink-0 text-amber-400" />
+        <div data-testid="announcement-banner" className={`${BANNER_THEMES[annTheme] || BANNER_THEMES.info} text-xs sm:text-sm px-4 py-2 flex items-center justify-center gap-2 text-center`}>
+          <Megaphone className={`w-4 h-4 shrink-0 ${annTheme === "promo" ? "text-amber-400" : "text-white/90"}`} />
           <span className="font-medium">{announcement}</span>
         </div>
       )}

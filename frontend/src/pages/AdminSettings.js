@@ -23,6 +23,20 @@ function priceHint(base, promo, promoActive) {
   return `Pelanggan bayar ${rupiah(b)} (harga normal).`;
 }
 
+function isoToLocal(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const THEME_OPTIONS = [
+  { v: "info", label: "Info", bar: "bg-blue-600" },
+  { v: "promo", label: "Promo", bar: "bg-slate-900" },
+  { v: "warning", label: "Peringatan", bar: "bg-red-600" },
+];
+
 export default function AdminSettings() {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
@@ -106,6 +120,28 @@ export default function AdminSettings() {
                 <Textarea data-testid="setting-announcement" value={form.announcement || ""} onChange={(e) => set("announcement", e.target.value)} className="mt-1 bg-white" rows={2} placeholder="Contoh: Promo tahunan diskon 28% hingga akhir bulan!" />
                 <p className="text-[11px] text-slate-400 mt-1">Tampil sebagai banner pengumuman di bagian atas semua halaman pengguna (Dashboard, Akun, Harga, dll). Kosongkan untuk menyembunyikan.</p>
               </div>
+              <div>
+                <Label className="text-slate-700">Warna Banner</Label>
+                <div className="flex gap-2 mt-1.5">
+                  {THEME_OPTIONS.map((t) => (
+                    <button
+                      key={t.v}
+                      type="button"
+                      data-testid={`theme-${t.v}`}
+                      onClick={() => set("announcementTheme", t.v)}
+                      className={`flex-1 rounded-lg border-2 px-3 py-2.5 text-xs font-semibold transition-all text-left ${
+                        (form.announcementTheme || "info") === t.v
+                          ? "border-slate-900 bg-slate-50 text-slate-900"
+                          : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+                      }`}
+                    >
+                      <span className={`block h-1.5 w-9 rounded-full mb-1.5 ${t.bar}`} />
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">Info (biru) untuk kabar umum, Promo (gelap) untuk penawaran, Peringatan (merah) untuk hal penting.</p>
+              </div>
               <div className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-3">
                 <div>
                   <div className="text-sm font-medium text-slate-800">Mode Pemeliharaan</div>
@@ -126,6 +162,20 @@ export default function AdminSettings() {
                   <div className="text-[11px] text-slate-500">Bila aktif, harga promo (jika lebih rendah) dipakai di halaman Harga & pembayaran.</div>
                 </div>
                 <Switch data-testid="setting-promo-active" checked={!!form.promoActive} onCheckedChange={(v) => set("promoActive", v)} />
+              </div>
+
+              <div>
+                <Label className="text-slate-700">Promo Berakhir Pada (opsional)</Label>
+                <Input
+                  data-testid="setting-promo-ends"
+                  type="datetime-local"
+                  value={isoToLocal(form.promoEndsAt)}
+                  onChange={(e) => set("promoEndsAt", e.target.value ? new Date(e.target.value).toISOString() : "")}
+                  className="mt-1 h-11 bg-white"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Kosongkan untuk promo tanpa batas waktu. Setelah tanggal ini promo otomatis nonaktif (harga kembali normal) dan hitung mundur tampil di halaman Harga.
+                </p>
               </div>
 
               <div className="rounded-lg border border-slate-200 p-4 space-y-3">

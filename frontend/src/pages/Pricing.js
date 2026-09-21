@@ -7,8 +7,18 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { rupiah } from "@/lib/format";
 import { motion } from "framer-motion";
-import { Check, Crown, Sparkles, ArrowLeft, Loader2, ShieldCheck } from "lucide-react";
+import { Check, Crown, Sparkles, ArrowLeft, Loader2, ShieldCheck, Timer } from "lucide-react";
 import { toast } from "sonner";
+
+function fmtCountdown(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return d > 0 ? `${d} hari ${pad(h)}:${pad(m)}:${pad(sec)}` : `${pad(h)}:${pad(m)}:${pad(sec)}`;
+}
 
 const FREE = ["Proyek tanpa batas", "Cash Flow (transaksi masuk/keluar)", "Manajemen Kasbon & Pelunasan Tukang", "Indikator kesehatan finansial", "Upload foto nota"];
 const PREMIUM = ["Semua fitur Free", "Progress Pekerjaan & Kurva-S", "Impor RAB dari Excel", "Portal Klien realtime + WhatsApp", "Baseline vs Revisi RAB", "Export Laporan PDF profesional", "Prioritas dukungan"];
@@ -34,20 +44,34 @@ export default function Pricing() {
   const { isPremium, refreshUser } = useAuth();
   const [busy, setBusy] = useState(false);
   const [pricing, setPricing] = useState(null);
+  const [serverOffset, setServerOffset] = useState(0);
+  const [nowTick, setNowTick] = useState(Date.now());
 
   useEffect(() => {
-    api.get("/settings/public").then((r) => setPricing(r.data)).catch(() => {});
+    api.get("/settings/public").then((r) => {
+      setPricing(r.data);
+      if (r.data?.serverNow) setServerOffset(Date.parse(r.data.serverNow) - Date.now());
+    }).catch(() => {});
   }, []);
 
-  const eff = (base, promo) => (pricing?.promoActive && promo > 0 && promo < base ? promo : base);
+  const endsAt = pricing?.promoEndsAt ? Date.parse(pricing.promoEndsAt) : null;
+  const promoLive = !!pricing?.promoActive && (!endsAt || (Date.now() + serverOffset) < endsAt);
+  const eff = (base, promo) => (promoLive && promo > 0 && promo < base ? promo : base);
   const mBase = pricing?.monthlyPrice ?? 149000;
   const mPromo = pricing?.monthlyPromo ?? mBase;
   const yBase = pricing?.yearlyPrice ?? 1290000;
   const yPromo = pricing?.yearlyPromo ?? yBase;
   const mEff = eff(mBase, mPromo);
   const yEff = eff(yBase, yPromo);
-  const promoOn = !!pricing?.promoActive && (mEff < mBase || yEff < yBase);
+  const promoOn = promoLive && (mEff < mBase || yEff < yBase);
   const yearSave = mEff > 0 ? Math.round((1 - yEff / (mEff * 12)) * 100) : 0;
+  const remaining = promoOn && endsAt ? Math.max(0, endsAt - (nowTick + serverOffset)) : null;
+
+  useEffect(() => {
+    if (!promoOn || !endsAt) return undefined;
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [promoOn, endsAt]);
 
   const pollOrder = async (orderId) => {
     for (let i = 0; i < 12; i++) {
@@ -138,6 +162,12 @@ export default function Pricing() {
                 <span data-testid="promo-badge" className="inline-flex items-center gap-1 mt-3 px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-[11px] font-bold">
                   PROMO SPESIAL
                 </span>
+              )}
+              {promoOn && remaining != null && (
+                <div data-testid="promo-countdown" className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-red-50 border border-red-100 px-3 py-1.5 text-xs font-semibold text-red-600">
+                  <Timer className="w-3.5 h-3.5" />
+                  Berakhir dalam {fmtCountdown(remaining)}
+                </div>
               )}
               <div className="mt-3 mb-1 flex items-baseline gap-2 flex-wrap">
                 {promoOn && mEff < mBase && (
