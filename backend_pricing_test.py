@@ -10,7 +10,7 @@ import requests
 from datetime import datetime
 
 # Base URL from frontend/.env
-BASE_URL = "https://interior-pro-63.preview.emergentagent.com/api"
+BASE_URL = "https://fintech-design-6.preview.emergentagent.com/api"
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")

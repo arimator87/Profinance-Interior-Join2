@@ -5,7 +5,7 @@ import uuid
 import pytest
 import requests
 
-BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://interior-pro-63.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://fintech-design-6.preview.emergentagent.com").rstrip("/")
 API = f"{BASE}/api"
 
 PREMIUM_EMAIL = "furnitrue.mail@gmail.com"

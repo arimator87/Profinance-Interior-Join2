@@ -9,7 +9,7 @@ import httpx
 from datetime import datetime
 
 # Configuration
-BACKEND_URL = "https://interior-pro-63.preview.emergentagent.com/api"
+BACKEND_URL = "https://fintech-design-6.preview.emergentagent.com/api"
 
 # Test results
 test_results = []

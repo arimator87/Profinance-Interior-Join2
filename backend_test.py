@@ -16,7 +16,7 @@ ROOT_DIR = Path(__file__).parent
 sys.path.insert(0, str(ROOT_DIR / "backend"))
 
 # Get configuration from environment
-BACKEND_URL = "https://interior-pro-63.preview.emergentagent.com/api"
+BACKEND_URL = "https://fintech-design-6.preview.emergentagent.com/api"
 MONGO_URL = "mongodb://localhost:27017"
 DB_NAME = "test_database"
 
