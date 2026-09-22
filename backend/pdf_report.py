@@ -763,7 +763,7 @@ def build_rab_pdf(project, rab, computed):
     if rab.get("quotationNo"):
         meta_lines.append(f"No : {rab['quotationNo']}")
     meta_lines.append("Tanggal : " + _fmt(rab.get("quotationDate")))
-    right = [Paragraph("SURAT PENAWARAN", st_title), Spacer(1, 2), Paragraph(quotation_by, st_qby),
+    right = [Paragraph("QUOTATION", st_title), Spacer(1, 2), Paragraph(quotation_by, st_qby),
              Spacer(1, 3), Paragraph("<br/>".join(meta_lines), st_meta)]
     head = Table([[left, right]], colWidths=[content_w * 0.58, content_w * 0.42])
     head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
@@ -951,5 +951,223 @@ def build_rab_pdf(project, rab, computed):
         canvas.restoreState()
 
     doc.build(story, onFirstPage=_rab_footer, onLaterPages=_rab_footer)
+    buf.seek(0)
+    return buf.read()
+
+
+
+INVOICE_TITLES = {
+    "proforma": "PROFORMA INVOICE",
+    "final": "INVOICE",
+    "retention": "INVOICE RETENSI",
+}
+
+
+def build_invoice_pdf(invoice, computed):
+    """Invoice / Proforma / Retention invoice — company header, client, item table, totals, bank & signature."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4, leftMargin=14 * mm, rightMargin=14 * mm,
+        topMargin=14 * mm, bottomMargin=16 * mm,
+    )
+    content_w = doc.width
+    AMBER = colors.HexColor("#d97706")
+    DARK = colors.HexColor("#0f172a")
+    GREYTX = colors.HexColor("#475569")
+    LINE = colors.HexColor("#e2e8f0")
+
+    inv_type = (invoice.get("type") or "proforma").lower()
+    title_txt = INVOICE_TITLES.get(inv_type, "INVOICE")
+
+    st_company = ParagraphStyle("ico", fontName="Helvetica-Bold", fontSize=15, textColor=DARK, leading=17)
+    st_small = ParagraphStyle("ism", fontName="Helvetica", fontSize=8, textColor=GREYTX, leading=11)
+    st_title = ParagraphStyle("iti", fontName="Helvetica-Bold", fontSize=17, textColor=AMBER, leading=19, alignment=TA_RIGHT)
+    st_meta = ParagraphStyle("ime", fontName="Helvetica", fontSize=8.5, textColor=DARK, leading=12, alignment=TA_RIGHT)
+    st_cell = ParagraphStyle("ice", fontName="Helvetica", fontSize=8.5, textColor=DARK, leading=11)
+    st_cellb = ParagraphStyle("iceb", fontName="Helvetica-Bold", fontSize=8.5, textColor=DARK, leading=11)
+    st_num = ParagraphStyle("inu", fontName="Helvetica", fontSize=8.5, textColor=DARK, leading=11, alignment=TA_RIGHT)
+    st_numb = ParagraphStyle("inub", fontName="Helvetica-Bold", fontSize=8.5, textColor=DARK, leading=11, alignment=TA_RIGHT)
+
+    company_label = (invoice.get("companyName") or "").strip()
+    issued_by = "Diterbitkan oleh " + (company_label if company_label else "—")
+    st_iby = ParagraphStyle("iby", fontName="Helvetica-Oblique", fontSize=7.5, textColor=AMBER, leading=10, alignment=TA_RIGHT)
+
+    story = []
+    # ---- Header
+    company = invoice.get("companyName") or "Perusahaan Anda"
+    co_info = "<br/>".join([x for x in [invoice.get("companyAddress", ""), ("Telp: " + invoice["companyPhone"]) if invoice.get("companyPhone") else ""] if x])
+    left = [Paragraph(company, st_company)]
+    if co_info:
+        left.append(Paragraph(co_info, st_small))
+    meta_lines = []
+    if invoice.get("number"):
+        meta_lines.append(f"No : {invoice['number']}")
+    meta_lines.append("Tanggal : " + _fmt(invoice.get("invoiceDate")))
+    if invoice.get("dueDate"):
+        meta_lines.append("Jatuh Tempo : " + _fmt(invoice.get("dueDate")))
+    status = (invoice.get("status") or "Draft")
+    meta_lines.append("Status : " + status)
+    right = [Paragraph(title_txt, st_title), Spacer(1, 2), Paragraph(issued_by, st_iby),
+             Spacer(1, 3), Paragraph("<br/>".join(meta_lines), st_meta)]
+    head = Table([[left, right]], colWidths=[content_w * 0.58, content_w * 0.42])
+    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(head)
+    story.append(Spacer(1, 6))
+    story.append(Table([[""]], colWidths=[content_w], style=TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1.4, AMBER)])))
+    story.append(Spacer(1, 8))
+
+    # ---- Proforma / retention note banner
+    if inv_type == "proforma":
+        story.append(Paragraph(
+            "<i>Dokumen ini adalah <b>Proforma Invoice</b> (permintaan pembayaran/uang muka/termin), <b>bukan faktur pajak</b>.</i>",
+            st_small))
+        story.append(Spacer(1, 6))
+    elif inv_type == "retention":
+        story.append(Paragraph(
+            "<i>Invoice penagihan <b>retensi</b> pekerjaan setelah berakhirnya masa pemeliharaan.</i>",
+            st_small))
+        story.append(Spacer(1, 6))
+
+    # ---- Client block
+    cl = [
+        [Paragraph("<b>Kepada Yth,</b>", st_cell)],
+        [Paragraph(invoice.get("clientName") or "-", st_cellb)],
+    ]
+    if invoice.get("clientAddress"):
+        cl.append([Paragraph(invoice["clientAddress"], st_cell)])
+    if invoice.get("clientPhone"):
+        cl.append([Paragraph("Telp: " + invoice["clientPhone"], st_cell)])
+    cltbl = Table(cl, colWidths=[content_w])
+    cltbl.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 0.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    story.append(cltbl)
+    story.append(Spacer(1, 8))
+
+    # ---- Items table
+    cw = [content_w * 0.06, content_w * 0.52, content_w * 0.10, content_w * 0.16, content_w * 0.16]
+    rows = [[Paragraph("NO", st_cellb), Paragraph("DESKRIPSI", st_cellb), Paragraph("QTY", st_numb),
+             Paragraph("HARGA SATUAN", st_numb), Paragraph("JUMLAH", st_numb)]]
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), DARK),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8.5),
+        ("ALIGN", (2, 0), (4, 0), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+    ]
+    r = 1
+    for it in computed.get("items", []):
+        qty = it.get("qty", 0)
+        qty_s = (f"{qty:.2f}".rstrip("0").rstrip(".")) if isinstance(qty, float) else str(qty)
+        rows.append([
+            Paragraph(str(it.get("no", r)), st_cell),
+            Paragraph(it.get("description") or "-", st_cell),
+            Paragraph(qty_s, st_num),
+            Paragraph(rupiah(it.get("unitPrice", 0)), st_num),
+            Paragraph(rupiah(it.get("amount", 0)), st_num),
+        ])
+        style_cmds += [("LINEBELOW", (0, r), (-1, r), 0.4, LINE)]
+        r += 1
+    tbl = Table(rows, colWidths=cw, repeatRows=1)
+    tbl.setStyle(TableStyle(style_cmds + [
+        ("BOX", (0, 0), (-1, -1), 0.6, LINE),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.6, DARK),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 6))
+
+    # ---- Summary
+    def sumrow(label, val, bold=False, big=False, color=None):
+        ls = ParagraphStyle("isl", fontName="Helvetica-Bold" if bold else "Helvetica", fontSize=11 if big else 9,
+                            textColor=(color or (colors.white if big else DARK)), alignment=TA_RIGHT, leading=13)
+        vs = ParagraphStyle("isv", fontName="Helvetica-Bold", fontSize=11 if big else 9,
+                            textColor=(color or (colors.white if big else DARK)), alignment=TA_RIGHT, leading=13)
+        return [Paragraph(label, ls), Paragraph(rupiah(val), vs)]
+
+    srows = [sumrow("Sub Total", computed.get("subtotal", 0))]
+    if computed.get("ppnEnabled"):
+        srows.append(sumrow(f"PPN {computed.get('ppnPercent', 0):g}%", computed.get("ppnAmount", 0)))
+    ret_on = computed.get("retentionEnabled") and computed.get("retentionAmount", 0) > 0
+    if ret_on:
+        srows.append(sumrow("Total", computed.get("grossTotal", 0), bold=True))
+        srows.append(sumrow(f"Retensi {computed.get('retentionPercent', 0):g}% (ditahan)", -computed.get("retentionAmount", 0)))
+    big_label = "DIBAYAR SEKARANG" if ret_on else "TOTAL TAGIHAN"
+    srows.append(sumrow(big_label, computed.get("amountDue", 0), bold=True, big=True))
+    ncols = len(srows)
+    stbl = Table(srows, colWidths=[content_w * 0.24, content_w * 0.22])
+    scmd = [("ALIGN", (0, 0), (-1, -1), "RIGHT"), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LINEBELOW", (0, 0), (-1, ncols - 2), 0.4, LINE),
+            ("BACKGROUND", (0, ncols - 1), (-1, ncols - 1), AMBER)]
+    stbl.setStyle(TableStyle(scmd))
+    wrap = Table([[Paragraph("<i>Terbilang: " + _terbilang(computed.get("amountDue", 0)) + "</i>", st_small), stbl]],
+                 colWidths=[content_w * 0.54, content_w * 0.46])
+    wrap.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(wrap)
+    story.append(Spacer(1, 8))
+
+    if ret_on:
+        story.append(Paragraph(
+            f"<i>Retensi {computed.get('retentionPercent', 0):g}% sebesar {rupiah(computed.get('retentionAmount', 0))} ditahan dan akan ditagih terpisah setelah masa pemeliharaan selesai.</i>",
+            st_small))
+        story.append(Spacer(1, 6))
+
+    # ---- Bank + notes
+    if invoice.get("bankName") or invoice.get("bankAccount"):
+        bank = f"<b>Pembayaran ditransfer ke:</b> {invoice.get('bankName','')} {invoice.get('bankAccount','')}"
+        if invoice.get("bankHolder"):
+            bank += f" a/n {invoice['bankHolder']}"
+        story.append(Paragraph(bank, st_cell))
+        story.append(Spacer(1, 4))
+    if invoice.get("notes"):
+        story.append(Paragraph(invoice["notes"].replace("\n", "<br/>"), st_small))
+        story.append(Spacer(1, 6))
+    story.append(Spacer(1, 12))
+
+    # ---- Signature (creator side, optional uploaded signature)
+    st_sig = ParagraphStyle("isg", fontName="Helvetica", fontSize=9, textColor=DARK, alignment=TA_CENTER, leading=13)
+    left_name = invoice.get("signerLeft") or invoice.get("companyName") or "Kontraktor"
+    col_w = content_w / 2
+    sig_decoded = _decode_signature(invoice.get("signatureImage"))
+    if sig_decoded:
+        bio, iw, ih = sig_decoded
+        max_w = 45 * mm
+        max_h = 22 * mm
+        ratio = (ih / iw) if iw else 0.4
+        draw_w = max_w
+        draw_h = draw_w * ratio
+        if draw_h > max_h:
+            draw_h = max_h
+            draw_w = draw_h / ratio if ratio else max_w
+        sig_img = RLImage(bio, width=draw_w, height=draw_h)
+        left_cell = [
+            Paragraph("Hormat kami,", st_sig), Spacer(1, 4),
+            sig_img, Spacer(1, 2),
+            Table([[""]], colWidths=[45 * mm], style=TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.6, DARK)])),
+            Paragraph(f"<b>{left_name}</b>", st_sig),
+        ]
+        left_tbl = Table([[c] for c in left_cell], colWidths=[col_w])
+        left_tbl.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER"), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+        left_block = left_tbl
+    else:
+        left_block = Paragraph(f"Hormat kami,<br/><br/><br/><br/>________________________<br/><b>{left_name}</b>", st_sig)
+    sig = Table([[left_block, ""]], colWidths=[col_w, col_w])
+    sig.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(sig)
+
+    def _inv_footer(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica-Oblique", 7.5)
+        canvas.setFillColor(GREYTX)
+        footer_txt = issued_by + ("  ·  Telp: " + invoice["companyPhone"] if invoice.get("companyPhone") else "")
+        canvas.drawCentredString(A4[0] / 2, 8 * mm, footer_txt)
+        canvas.setStrokeColor(LINE)
+        canvas.setLineWidth(0.5)
+        canvas.line(14 * mm, 11 * mm, A4[0] - 14 * mm, 11 * mm)
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_inv_footer, onLaterPages=_inv_footer)
     buf.seek(0)
     return buf.read()

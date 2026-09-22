@@ -38,7 +38,7 @@ from auth import (
     reset_password_with_phone,
 )
 from storage import init_storage, put_object, get_object, APP_NAME, MIME_TYPES
-from pdf_report import build_report_pdf, build_progress_pdf, build_rab_pdf
+from pdf_report import build_report_pdf, build_progress_pdf, build_rab_pdf, build_invoice_pdf
 import backup as backup_mod
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -132,6 +132,38 @@ def compute_rab(rab: dict) -> dict:
         "afterDiscount": after, "ppnEnabled": ppn_enabled, "ppnPercent": ppn_percent,
         "ppnAmount": ppn_amount, "grandTotal": grand, "termins": termins,
     }
+
+
+def compute_invoice(inv: dict) -> dict:
+    """Financial computation for an invoice/proforma/retention document."""
+    items_out = []
+    subtotal = 0
+    for i, it in enumerate(inv.get("items", []) or [], start=1):
+        qty = float(it.get("qty") or 0)
+        unit = int(it.get("unitPrice") or 0)
+        amount = round(qty * unit)
+        subtotal += amount
+        items_out.append({
+            "no": i, "description": it.get("description", ""),
+            "qty": qty, "unitPrice": unit, "amount": amount,
+        })
+    ppn_enabled = bool(inv.get("ppnEnabled"))
+    ppn_percent = float(inv.get("ppnPercent") or 0)
+    ppn_amount = round(subtotal * ppn_percent / 100) if ppn_enabled else 0
+    gross = subtotal + ppn_amount
+    ret_enabled = bool(inv.get("retentionEnabled"))
+    ret_percent = float(inv.get("retentionPercent") or 0)
+    # Retention is held back on the work value (DPP / subtotal), per common practice
+    ret_amount = round(subtotal * ret_percent / 100) if ret_enabled else 0
+    amount_due = gross - ret_amount
+    return {
+        "items": items_out, "subtotal": subtotal,
+        "ppnEnabled": ppn_enabled, "ppnPercent": ppn_percent, "ppnAmount": ppn_amount,
+        "grossTotal": gross,
+        "retentionEnabled": ret_enabled, "retentionPercent": ret_percent, "retentionAmount": ret_amount,
+        "amountDue": amount_due,
+    }
+
 
 
 # ---------- Schemas ----------
@@ -281,6 +313,38 @@ class CompanyTemplateIn(BaseModel):
     signerLeft: str = ""
     signerRight: str = ""
     signatureImage: str = ""
+
+
+class InvoiceItemIn(BaseModel):
+    description: str = ""
+    qty: float = 1
+    unitPrice: int = 0
+
+
+class InvoiceIn(BaseModel):
+    type: str = "proforma"  # proforma | final | retention
+    number: str = ""
+    invoiceDate: Optional[str] = None
+    dueDate: Optional[str] = None
+    status: str = "Draft"  # Draft | Terkirim | Lunas
+    clientName: str = ""
+    clientAddress: str = ""
+    clientPhone: str = ""
+    items: List[InvoiceItemIn] = []
+    ppnEnabled: bool = False
+    ppnPercent: float = 11
+    retentionEnabled: bool = False
+    retentionPercent: float = 5
+    companyName: str = ""
+    companyAddress: str = ""
+    companyPhone: str = ""
+    bankName: str = ""
+    bankAccount: str = ""
+    bankHolder: str = ""
+    signerLeft: str = ""
+    signerRight: str = ""
+    signatureImage: str = ""
+    notes: str = ""
 
 
 # ---------- Finance calc ----------
@@ -1693,6 +1757,161 @@ async def public_rab_pdf(slug: str):
         iter([pdf_bytes]), media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="Penawaran-{safe}.pdf"'},
     )
+
+
+# ---------- Invoices (Premium) ----------
+INVOICE_TYPES = {"proforma", "final", "retention"}
+
+
+async def _get_owned_invoice(invoice_id: str, user: dict) -> dict:
+    inv = await db.invoices.find_one({"id": invoice_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice tidak ditemukan")
+    return inv
+
+
+@api.get("/projects/{project_id}/invoice-context")
+async def invoice_context(project_id: str, user: dict = Depends(require_premium)):
+    """Prefill data for the invoice form: client, company template, RAB payment terms,
+    payment progress, existing invoices, and a suggested invoice type."""
+    p = await get_owned_project(project_id, user)
+    summary = await compute_summary(p)
+    rab = p.get("rab") or {}
+    comp = compute_rab(rab) if rab else {}
+    template = await db.rab_templates.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+
+    txs = await db.transactions.find({"project_id": project_id, "type": "in"}, {"_id": 0}).to_list(5000)
+    paid = {"Downpayment": 0, "Termin": 0, "Pelunasan": 0}
+    for t in txs:
+        cat = t.get("category")
+        if cat in paid:
+            paid[cat] += t.get("amount", 0)
+
+    termins = comp.get("termins", []) or []
+    existing = await db.invoices.find({"project_id": project_id}, {"_id": 0}).sort("createdAt", 1).to_list(500)
+    proforma_count = sum(1 for e in existing if e.get("type") == "proforma")
+
+    # ---- Suggestion (correct financial workflow) ----
+    # DP & progress termins -> Proforma; final settlement -> Invoice (final).
+    sisa = summary.get("sisaTagihan", 0)
+    suggested_type = "proforma"
+    suggested_desc = "Uang Muka (DP)"
+    suggested_amount = 0
+    if termins:
+        # index of the next installment to bill (by count of proforma issued)
+        idx = min(proforma_count, len(termins) - 1)
+        is_last = idx >= len(termins) - 1
+        nxt = termins[idx]
+        label = (nxt.get("label") or "").lower()
+        suggested_desc = nxt.get("label") or f"Termin {idx + 1}"
+        suggested_amount = nxt.get("nominal", 0)
+        if is_last or "lunas" in label or "pelunasan" in label:
+            suggested_type = "final"
+    else:
+        # No RAB terms: DP first, then final for the remainder
+        if paid["Downpayment"] == 0 and paid["Termin"] == 0 and paid["Pelunasan"] == 0:
+            suggested_type = "proforma"
+            suggested_desc = "Uang Muka (DP)"
+            suggested_amount = round((p.get("nominal", 0) or 0) * 0.5)
+        else:
+            suggested_type = "final"
+            suggested_desc = "Pelunasan"
+            suggested_amount = max(0, sisa)
+
+    return {
+        "project": {"id": p["id"], "name": p.get("name"), "nominal": p.get("nominal", 0), "status": p.get("status")},
+        "client": {
+            "clientName": p.get("owner") or rab.get("clientName", ""),
+            "clientAddress": p.get("alamatProyek") or rab.get("clientAddress", ""),
+            "clientPhone": rab.get("clientPhone", ""),
+        },
+        "company": {k: template.get(k, "") for k in (
+            "companyName", "companyAddress", "companyPhone", "bankName", "bankAccount",
+            "bankHolder", "signerLeft", "signerRight", "signatureImage")},
+        "ppn": {"ppnEnabled": comp.get("ppnEnabled", False), "ppnPercent": comp.get("ppnPercent", 11)},
+        "termins": termins,
+        "summary": {**summary, "paid": paid},
+        "suggestion": {"type": suggested_type, "description": suggested_desc, "amount": suggested_amount},
+        "existingCount": len(existing),
+    }
+
+
+def _invoice_public(inv: dict) -> dict:
+    doc = {k: v for k, v in inv.items() if k != "user_id"}
+    doc["computed"] = compute_invoice(inv)
+    return doc
+
+
+@api.post("/projects/{project_id}/invoices")
+async def create_invoice(project_id: str, body: InvoiceIn, user: dict = Depends(require_premium)):
+    p = await get_owned_project(project_id, user)
+    if body.type not in INVOICE_TYPES:
+        raise HTTPException(status_code=400, detail="Tipe invoice tidak valid")
+    if not (body.number or "").strip():
+        raise HTTPException(status_code=400, detail="Nomor invoice wajib diisi")
+    if body.signatureImage and len(body.signatureImage) > 3_000_000:
+        raise HTTPException(status_code=400, detail="Gambar tanda tangan terlalu besar (maks ~2MB)")
+    doc = {
+        "id": str(uuid.uuid4()), "user_id": user["user_id"], "project_id": project_id,
+        "projectName": p.get("name"),
+        **body.model_dump(),
+        "number": body.number.strip(),
+        "invoiceDate": body.invoiceDate or now_iso(),
+        "createdAt": now_iso(), "updatedAt": now_iso(),
+    }
+    await db.invoices.insert_one(doc)
+    doc.pop("_id", None)
+    return _invoice_public(doc)
+
+
+@api.get("/projects/{project_id}/invoices")
+async def list_invoices(project_id: str, user: dict = Depends(require_premium)):
+    await get_owned_project(project_id, user)
+    docs = await db.invoices.find({"project_id": project_id, "user_id": user["user_id"]}, {"_id": 0}).sort("createdAt", -1).to_list(500)
+    return [_invoice_public(d) for d in docs]
+
+
+@api.get("/invoices/{invoice_id}")
+async def get_invoice(invoice_id: str, user: dict = Depends(require_premium)):
+    inv = await _get_owned_invoice(invoice_id, user)
+    return _invoice_public(inv)
+
+
+@api.put("/invoices/{invoice_id}")
+async def update_invoice(invoice_id: str, body: InvoiceIn, user: dict = Depends(require_premium)):
+    await _get_owned_invoice(invoice_id, user)
+    if body.type not in INVOICE_TYPES:
+        raise HTTPException(status_code=400, detail="Tipe invoice tidak valid")
+    if not (body.number or "").strip():
+        raise HTTPException(status_code=400, detail="Nomor invoice wajib diisi")
+    if body.signatureImage and len(body.signatureImage) > 3_000_000:
+        raise HTTPException(status_code=400, detail="Gambar tanda tangan terlalu besar (maks ~2MB)")
+    updates = {**body.model_dump(), "number": body.number.strip(), "updatedAt": now_iso()}
+    await db.invoices.update_one({"id": invoice_id}, {"$set": updates})
+    inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    return _invoice_public(inv)
+
+
+@api.delete("/invoices/{invoice_id}")
+async def delete_invoice(invoice_id: str, user: dict = Depends(require_premium)):
+    await _get_owned_invoice(invoice_id, user)
+    await db.invoices.delete_one({"id": invoice_id})
+    return {"ok": True}
+
+
+@api.get("/invoices/{invoice_id}/pdf")
+async def invoice_pdf(invoice_id: str, request: Request, auth: Optional[str] = Query(None)):
+    user = await _user_from_request_or_query(request, auth)
+    await require_premium(user)
+    inv = await _get_owned_invoice(invoice_id, user)
+    pdf_bytes = build_invoice_pdf(inv, compute_invoice(inv))
+    prefix = {"proforma": "Proforma", "final": "Invoice", "retention": "Invoice-Retensi"}.get(inv.get("type"), "Invoice")
+    safe = slugify(inv.get("number") or inv.get("projectName") or "invoice")
+    return StreamingResponse(
+        iter([pdf_bytes]), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{prefix}-{safe}.pdf"'},
+    )
+
 
 
 

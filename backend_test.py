@@ -1,541 +1,803 @@
 #!/usr/bin/env python3
 """
-Backend test for RAB Builder (Surat Penawaran) feature.
-Tests all RAB endpoints, math computation, premium gating, and deal-to-progress flow.
+Backend test suite for Invoice endpoints
+Tests all invoice CRUD operations, PDF generation, validation, and premium/demo gating
 """
 import requests
 import json
 import sys
+import time
 
-# Internal backend URL
-BASE_URL = "http://localhost:8001/api"
+# Backend URL from frontend/.env
+BASE_URL = "https://profinance-interior-1.preview.emergentagent.com/api"
 
 # Test credentials
-PREMIUM_EMAIL = "premium@test.com"
-PREMIUM_PASSWORD = "Premium123"
+PREMIUM_EMAIL = "furnitrue.mail@gmail.com"
+PREMIUM_PASSWORD = "Password123"
+EXISTING_PROJECT_ID = "c420b3e7-cd4a-4cad-93cb-e9385960d4f5"
+
+# Test results
+results = []
 
 def log(msg):
     print(f"[TEST] {msg}")
+    results.append(msg)
 
-def test_login_premium():
-    """Login with premium account and return token."""
-    log("1. Login with premium@test.com")
-    resp = requests.post(f"{BASE_URL}/auth/login", json={
+def test_login():
+    """Test 1: Login with premium account"""
+    log("=" * 80)
+    log("TEST 1: Login with premium account")
+    log("=" * 80)
+    
+    response = requests.post(f"{BASE_URL}/auth/login", json={
         "email": PREMIUM_EMAIL,
         "password": PREMIUM_PASSWORD
     })
-    if resp.status_code != 200:
-        log(f"❌ Login failed: {resp.status_code} - {resp.text}")
-        sys.exit(1)
-    data = resp.json()
+    
+    if response.status_code != 200:
+        log(f"❌ FAIL: Login failed with status {response.status_code}")
+        log(f"Response: {response.text}")
+        return None
+    
+    data = response.json()
     token = data.get("token")
-    log(f"✅ Login successful, token: {token[:20]}...")
+    
+    if not token:
+        log(f"❌ FAIL: No token in response")
+        return None
+    
+    log(f"✅ PASS: Login successful, token obtained")
     return token
 
-def test_create_rab(token):
-    """Create RAB with materials and verify math."""
-    log("2. POST /api/rab - Create RAB with materials")
+def test_invoice_context(token):
+    """Test 2: GET /api/projects/{project_id}/invoice-context"""
+    log("=" * 80)
+    log("TEST 2: GET /api/projects/{project_id}/invoice-context")
+    log("=" * 80)
     
-    # RAB body with materials as specified in review request
-    body = {
-        "projectName": "RAB Test Penawaran",
-        "category": "Residensial",
-        "rab": {
-            "clientName": "Mba Grace",
-            "clientAddress": "Puri Imperium",
-            "clientPhone": "0812",
-            "quotationNo": "15/IX/26",
-            "quotationDate": "2026-09-17",
-            "companyName": "Furniture Interior",
-            "discount": 2417500,
-            "ppnEnabled": False,
-            "ppnPercent": 11,
-            "sections": [
-                {
-                    "name": "PEKERJAAN PERSIAPAN",
-                    "subItems": [
-                        {
-                            "name": "Mobilisasi",
-                            "qty": 1,
-                            "unit": "Ls",
-                            "hargaSatuan": 3500000,
-                            "materials": []
-                        }
-                    ]
-                },
-                {
-                    "name": "BEDROOM",
-                    "subItems": [
-                        {
-                            "name": "Lemari Pakaian",
-                            "qty": 3.11,
-                            "unit": "m2",
-                            "hargaSatuan": 2950000,
-                            "materials": [
-                                {"name": "Rail Slowmotion", "nilai": 250000},
-                                {"name": "Engsel", "nilai": 150000}
-                            ]
-                        }
-                    ]
-                }
-            ],
-            "termins": [
-                {"label": "DP", "percent": 50},
-                {"label": "Termin", "percent": 30},
-                {"label": "Pelunasan", "percent": 20}
-            ]
-        }
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoice-context", headers=headers)
+    
+    if response.status_code != 200:
+        log(f"❌ FAIL: Status {response.status_code}")
+        log(f"Response: {response.text}")
+        return False
+    
+    data = response.json()
+    
+    # Verify structure
+    required_keys = ["project", "client", "company", "ppn", "termins", "summary", "suggestion", "existingCount"]
+    missing = [k for k in required_keys if k not in data]
+    
+    if missing:
+        log(f"❌ FAIL: Missing keys: {missing}")
+        return False
+    
+    # Verify suggestion structure
+    suggestion = data.get("suggestion", {})
+    if "type" not in suggestion or "description" not in suggestion or "amount" not in suggestion:
+        log(f"❌ FAIL: Invalid suggestion structure: {suggestion}")
+        return False
+    
+    # Verify suggestion type is valid
+    if suggestion["type"] not in ["proforma", "final"]:
+        log(f"❌ FAIL: Invalid suggestion type: {suggestion['type']}")
+        return False
+    
+    log(f"✅ PASS: Invoice context returned with correct structure")
+    log(f"  - Project: {data['project']['name']}")
+    log(f"  - Suggestion: {suggestion['type']} - {suggestion['description']} - Rp {suggestion['amount']:,}")
+    log(f"  - Existing invoices: {data['existingCount']}")
+    
+    return True
+
+def test_create_proforma_invoice(token):
+    """Test 3: POST /api/projects/{project_id}/invoices - Create proforma invoice"""
+    log("=" * 80)
+    log("TEST 3: POST /api/projects/{project_id}/invoices - Create proforma invoice")
+    log("=" * 80)
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    invoice_data = {
+        "type": "proforma",
+        "number": "PRO/2025/07/001",
+        "invoiceDate": None,
+        "dueDate": None,
+        "status": "Draft",
+        "clientName": "Bpk. Andika",
+        "clientAddress": "Canggu, Bali",
+        "clientPhone": "08123",
+        "items": [
+            {
+                "description": "Uang Muka (DP) 50%",
+                "qty": 1,
+                "unitPrice": 10000000
+            }
+        ],
+        "ppnEnabled": True,
+        "ppnPercent": 11,
+        "retentionEnabled": False,
+        "retentionPercent": 5,
+        "companyName": "CV Karya",
+        "companyAddress": "",
+        "companyPhone": "",
+        "bankName": "BCA",
+        "bankAccount": "123",
+        "bankHolder": "CV Karya",
+        "signerLeft": "",
+        "signerRight": "",
+        "signatureImage": "",
+        "notes": "Terima kasih"
     }
     
-    resp = requests.post(f"{BASE_URL}/rab", json=body, headers={"Authorization": f"Bearer {token}"})
-    if resp.status_code != 200:
-        log(f"❌ Create RAB failed: {resp.status_code} - {resp.text}")
-        sys.exit(1)
+    response = requests.post(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoices", 
+                            json=invoice_data, headers=headers)
     
-    data = resp.json()
-    log(f"✅ RAB created, status: {data.get('status')}, project_id: {data.get('id')}")
+    if response.status_code != 200:
+        log(f"❌ FAIL: Status {response.status_code}")
+        log(f"Response: {response.text}")
+        return None
     
-    # Verify math
+    data = response.json()
+    
+    # Verify computed values
     computed = data.get("computed", {})
-    log("\n=== MATH VERIFICATION ===")
     
-    # Expected: Lemari sub-item nilai = round(3.11 * 2950000) + (250000 + 150000)
-    # = 9174500 + 400000 = 9574500
-    lemari_section = computed.get("sections", [])[1] if len(computed.get("sections", [])) > 1 else {}
-    lemari_subitem = lemari_section.get("subItems", [])[0] if lemari_section.get("subItems") else {}
-    lemari_nilai = lemari_subitem.get("nilai", 0)
-    expected_lemari = 9574500
-    log(f"Lemari Pakaian nilai: {lemari_nilai} (expected: {expected_lemari})")
-    if lemari_nilai != expected_lemari:
-        log(f"❌ MATH ERROR: Lemari nilai mismatch! Got {lemari_nilai}, expected {expected_lemari}")
-        sys.exit(1)
+    expected_subtotal = 10000000
+    expected_ppn = round(10000000 * 11 / 100)  # 1100000
+    expected_gross = expected_subtotal + expected_ppn  # 11100000
+    expected_retention = 0
+    expected_due = expected_gross - expected_retention  # 11100000
     
-    # BEDROOM subtotal should be 9574500
-    bedroom_subtotal = lemari_section.get("subtotal", 0)
-    log(f"BEDROOM subtotal: {bedroom_subtotal} (expected: 9574500)")
-    if bedroom_subtotal != 9574500:
-        log(f"❌ MATH ERROR: BEDROOM subtotal mismatch!")
-        sys.exit(1)
+    if computed.get("subtotal") != expected_subtotal:
+        log(f"❌ FAIL: Subtotal mismatch. Expected {expected_subtotal}, got {computed.get('subtotal')}")
+        return None
     
-    # PEKERJAAN PERSIAPAN subtotal should be 3500000
-    prep_section = computed.get("sections", [])[0] if computed.get("sections") else {}
-    prep_subtotal = prep_section.get("subtotal", 0)
-    log(f"PEKERJAAN PERSIAPAN subtotal: {prep_subtotal} (expected: 3500000)")
-    if prep_subtotal != 3500000:
-        log(f"❌ MATH ERROR: PEKERJAAN PERSIAPAN subtotal mismatch!")
-        sys.exit(1)
+    if computed.get("ppnAmount") != expected_ppn:
+        log(f"❌ FAIL: PPN mismatch. Expected {expected_ppn}, got {computed.get('ppnAmount')}")
+        return None
     
-    # totalItems = 13074500
-    total_items = computed.get("totalItems", 0)
-    log(f"totalItems: {total_items} (expected: 13074500)")
-    if total_items != 13074500:
-        log(f"❌ MATH ERROR: totalItems mismatch!")
-        sys.exit(1)
+    if computed.get("grossTotal") != expected_gross:
+        log(f"❌ FAIL: Gross total mismatch. Expected {expected_gross}, got {computed.get('grossTotal')}")
+        return None
     
-    # grandTotal = 13074500 - 2417500 = 10657000 (ppn disabled)
-    grand_total = computed.get("grandTotal", 0)
-    log(f"grandTotal: {grand_total} (expected: 10657000)")
-    if grand_total != 10657000:
-        log(f"❌ MATH ERROR: grandTotal mismatch!")
-        sys.exit(1)
+    if computed.get("retentionAmount") != expected_retention:
+        log(f"❌ FAIL: Retention mismatch. Expected {expected_retention}, got {computed.get('retentionAmount')}")
+        return None
     
-    # Verify project.nominal == grandTotal and project.rabTotal == totalItems
-    project_nominal = data.get("nominal", 0)
-    project_rab_total = data.get("rabTotal", 0)
-    log(f"project.nominal: {project_nominal} (expected: {grand_total})")
-    log(f"project.rabTotal: {project_rab_total} (expected: {total_items})")
-    if project_nominal != grand_total:
-        log(f"❌ MATH ERROR: project.nominal != grandTotal!")
-        sys.exit(1)
-    if project_rab_total != total_items:
-        log(f"❌ MATH ERROR: project.rabTotal != totalItems!")
-        sys.exit(1)
+    if computed.get("amountDue") != expected_due:
+        log(f"❌ FAIL: Amount due mismatch. Expected {expected_due}, got {computed.get('amountDue')}")
+        return None
     
-    # Verify termins
-    termins = computed.get("termins", [])
-    log(f"Termins: {termins}")
-    # DP 50% of 10657000 = 5328500
-    # Termin 30% = 3197100
-    # Pelunasan 20% = 2131400
-    expected_termins = [5328500, 3197100, 2131400]
-    for i, t in enumerate(termins):
-        if t.get("nominal") != expected_termins[i]:
-            log(f"❌ MATH ERROR: Termin {i} nominal mismatch! Got {t.get('nominal')}, expected {expected_termins[i]}")
-            sys.exit(1)
+    invoice_id = data.get("id")
+    if not invoice_id:
+        log(f"❌ FAIL: No invoice ID in response")
+        return None
     
-    log("✅ ALL MATH VERIFIED CORRECTLY!")
-    return data.get("id")
+    log(f"✅ PASS: Proforma invoice created successfully")
+    log(f"  - Invoice ID: {invoice_id}")
+    log(f"  - Number: {data.get('number')}")
+    log(f"  - Type: {data.get('type')}")
+    log(f"  - Subtotal: Rp {computed['subtotal']:,}")
+    log(f"  - PPN (11%): Rp {computed['ppnAmount']:,}")
+    log(f"  - Gross Total: Rp {computed['grossTotal']:,}")
+    log(f"  - Retention: Rp {computed['retentionAmount']:,}")
+    log(f"  - Amount Due: Rp {computed['amountDue']:,}")
+    
+    return invoice_id
 
-def test_get_rab(token, project_id):
-    """GET /api/projects/{id}/rab"""
-    log(f"\n3. GET /api/projects/{project_id}/rab")
-    resp = requests.get(f"{BASE_URL}/projects/{project_id}/rab", headers={"Authorization": f"Bearer {token}"})
-    if resp.status_code != 200:
-        log(f"❌ GET RAB failed: {resp.status_code} - {resp.text}")
-        sys.exit(1)
+def test_create_final_invoice_with_retention(token):
+    """Test 4: POST /api/projects/{project_id}/invoices - Create final invoice with retention"""
+    log("=" * 80)
+    log("TEST 4: POST /api/projects/{project_id}/invoices - Create final invoice with retention")
+    log("=" * 80)
     
-    data = resp.json()
-    log(f"✅ GET RAB successful")
-    log(f"   - projectName: {data.get('projectName')}")
-    log(f"   - status: {data.get('status')}")
-    log(f"   - rabSlug: {data.get('rabSlug')}")
-    log(f"   - computed.grandTotal: {data.get('computed', {}).get('grandTotal')}")
+    headers = {"Authorization": f"Bearer {token}"}
     
-    if not data.get("rabSlug"):
-        log("❌ ERROR: rabSlug missing!")
-        sys.exit(1)
-    
-    return data.get("rabSlug")
-
-def test_update_rab(token, project_id):
-    """PUT /api/projects/{id}/rab - change discount and verify re-sync"""
-    log(f"\n4. PUT /api/projects/{project_id}/rab - change discount to 0")
-    
-    body = {
-        "projectName": "RAB Test Penawaran",
-        "category": "Residensial",
-        "rab": {
-            "clientName": "Mba Grace",
-            "clientAddress": "Puri Imperium",
-            "clientPhone": "0812",
-            "quotationNo": "15/IX/26",
-            "quotationDate": "2026-09-17",
-            "companyName": "Furniture Interior",
-            "discount": 0,  # Changed from 2417500 to 0
-            "ppnEnabled": False,
-            "ppnPercent": 11,
-            "sections": [
-                {
-                    "name": "PEKERJAAN PERSIAPAN",
-                    "subItems": [
-                        {
-                            "name": "Mobilisasi",
-                            "qty": 1,
-                            "unit": "Ls",
-                            "hargaSatuan": 3500000,
-                            "materials": []
-                        }
-                    ]
-                },
-                {
-                    "name": "BEDROOM",
-                    "subItems": [
-                        {
-                            "name": "Lemari Pakaian",
-                            "qty": 3.11,
-                            "unit": "m2",
-                            "hargaSatuan": 2950000,
-                            "materials": [
-                                {"name": "Rail Slowmotion", "nilai": 250000},
-                                {"name": "Engsel", "nilai": 150000}
-                            ]
-                        }
-                    ]
-                }
-            ],
-            "termins": [
-                {"label": "DP", "percent": 50},
-                {"label": "Termin", "percent": 30},
-                {"label": "Pelunasan", "percent": 20}
-            ]
-        }
+    invoice_data = {
+        "type": "final",
+        "number": "INV/2025/07/001",
+        "invoiceDate": None,
+        "dueDate": None,
+        "status": "Draft",
+        "clientName": "Bpk. Andika",
+        "clientAddress": "Canggu, Bali",
+        "clientPhone": "08123",
+        "items": [
+            {
+                "description": "Pelunasan Proyek",
+                "qty": 1,
+                "unitPrice": 20000000
+            }
+        ],
+        "ppnEnabled": True,
+        "ppnPercent": 11,
+        "retentionEnabled": True,
+        "retentionPercent": 5,
+        "companyName": "CV Karya",
+        "companyAddress": "",
+        "companyPhone": "",
+        "bankName": "BCA",
+        "bankAccount": "123",
+        "bankHolder": "CV Karya",
+        "signerLeft": "",
+        "signerRight": "",
+        "signatureImage": "",
+        "notes": "Terima kasih"
     }
     
-    resp = requests.put(f"{BASE_URL}/projects/{project_id}/rab", json=body, headers={"Authorization": f"Bearer {token}"})
-    if resp.status_code != 200:
-        log(f"❌ Update RAB failed: {resp.status_code} - {resp.text}")
-        sys.exit(1)
+    response = requests.post(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoices", 
+                            json=invoice_data, headers=headers)
     
-    log("✅ RAB updated")
+    if response.status_code != 200:
+        log(f"❌ FAIL: Status {response.status_code}")
+        log(f"Response: {response.text}")
+        return None
     
-    # GET again to verify
-    log("   Verifying updated values...")
-    resp = requests.get(f"{BASE_URL}/projects/{project_id}/rab", headers={"Authorization": f"Bearer {token}"})
-    data = resp.json()
+    data = response.json()
+    
+    # Verify computed values with retention
     computed = data.get("computed", {})
     
-    # With discount=0, grandTotal should equal totalItems (13074500)
-    grand_total = computed.get("grandTotal", 0)
-    total_items = computed.get("totalItems", 0)
-    log(f"   - grandTotal: {grand_total} (expected: 13074500)")
-    log(f"   - totalItems: {total_items} (expected: 13074500)")
+    expected_subtotal = 20000000
+    expected_ppn = round(20000000 * 11 / 100)  # 2200000
+    expected_gross = expected_subtotal + expected_ppn  # 22200000
+    expected_retention = round(20000000 * 5 / 100)  # 1000000 (5% of subtotal/DPP)
+    expected_due = expected_gross - expected_retention  # 21200000
     
-    if grand_total != 13074500 or total_items != 13074500:
-        log(f"❌ ERROR: Updated values incorrect!")
-        sys.exit(1)
+    if computed.get("subtotal") != expected_subtotal:
+        log(f"❌ FAIL: Subtotal mismatch. Expected {expected_subtotal}, got {computed.get('subtotal')}")
+        return None
     
-    # Verify project.nominal and rabTotal re-synced (still Prospek)
-    resp = requests.get(f"{BASE_URL}/projects/{project_id}", headers={"Authorization": f"Bearer {token}"})
-    project = resp.json()
-    log(f"   - project.nominal: {project.get('nominal')} (expected: 13074500)")
-    log(f"   - project.rabTotal: {project.get('rabTotal')} (expected: 13074500)")
-    log(f"   - project.status: {project.get('status')} (expected: Prospek)")
+    if computed.get("ppnAmount") != expected_ppn:
+        log(f"❌ FAIL: PPN mismatch. Expected {expected_ppn}, got {computed.get('ppnAmount')}")
+        return None
     
-    if project.get("nominal") != 13074500 or project.get("rabTotal") != 13074500:
-        log(f"❌ ERROR: Project values not re-synced!")
-        sys.exit(1)
+    if computed.get("grossTotal") != expected_gross:
+        log(f"❌ FAIL: Gross total mismatch. Expected {expected_gross}, got {computed.get('grossTotal')}")
+        return None
     
-    log("✅ Update and re-sync verified!")
+    if computed.get("retentionAmount") != expected_retention:
+        log(f"❌ FAIL: Retention mismatch. Expected {expected_retention}, got {computed.get('retentionAmount')}")
+        log(f"  Note: Retention should be 5% of subtotal (DPP), not gross total")
+        return None
+    
+    if computed.get("amountDue") != expected_due:
+        log(f"❌ FAIL: Amount due mismatch. Expected {expected_due}, got {computed.get('amountDue')}")
+        return None
+    
+    invoice_id = data.get("id")
+    if not invoice_id:
+        log(f"❌ FAIL: No invoice ID in response")
+        return None
+    
+    log(f"✅ PASS: Final invoice with retention created successfully")
+    log(f"  - Invoice ID: {invoice_id}")
+    log(f"  - Number: {data.get('number')}")
+    log(f"  - Type: {data.get('type')}")
+    log(f"  - Subtotal: Rp {computed['subtotal']:,}")
+    log(f"  - PPN (11%): Rp {computed['ppnAmount']:,}")
+    log(f"  - Gross Total: Rp {computed['grossTotal']:,}")
+    log(f"  - Retention (5% of subtotal): Rp {computed['retentionAmount']:,}")
+    log(f"  - Amount Due: Rp {computed['amountDue']:,}")
+    
+    return invoice_id
 
-def test_rab_pdf(token, project_id):
-    """GET /api/projects/{id}/rab/pdf?auth={token}"""
-    log(f"\n5. GET /api/projects/{project_id}/rab/pdf?auth={{token}}")
-    resp = requests.get(f"{BASE_URL}/projects/{project_id}/rab/pdf?auth={token}")
-    if resp.status_code != 200:
-        log(f"❌ RAB PDF failed: {resp.status_code} - {resp.text}")
-        sys.exit(1)
+def test_validation_empty_number(token):
+    """Test 5: Validation - Empty invoice number should return 400"""
+    log("=" * 80)
+    log("TEST 5: Validation - Empty invoice number should return 400")
+    log("=" * 80)
     
-    content_type = resp.headers.get("Content-Type", "")
-    pdf_bytes = resp.content
+    headers = {"Authorization": f"Bearer {token}"}
     
-    log(f"✅ RAB PDF generated")
-    log(f"   - Content-Type: {content_type}")
-    log(f"   - Size: {len(pdf_bytes)} bytes")
-    log(f"   - First 8 bytes: {pdf_bytes[:8]}")
+    invoice_data = {
+        "type": "proforma",
+        "number": "",  # Empty number
+        "status": "Draft",
+        "clientName": "Test",
+        "items": [{"description": "Test", "qty": 1, "unitPrice": 1000000}],
+        "ppnEnabled": False,
+        "retentionEnabled": False
+    }
     
-    if content_type != "application/pdf":
-        log(f"❌ ERROR: Wrong Content-Type!")
-        sys.exit(1)
+    response = requests.post(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoices", 
+                            json=invoice_data, headers=headers)
     
-    if not pdf_bytes.startswith(b"%PDF"):
-        log(f"❌ ERROR: Not a valid PDF (missing %PDF header)!")
-        sys.exit(1)
+    if response.status_code != 400:
+        log(f"❌ FAIL: Expected 400, got {response.status_code}")
+        log(f"Response: {response.text}")
+        return False
     
-    log("✅ PDF valid (%PDF header present)")
+    data = response.json()
+    if "Nomor invoice wajib diisi" not in data.get("detail", ""):
+        log(f"❌ FAIL: Wrong error message: {data.get('detail')}")
+        return False
+    
+    log(f"✅ PASS: Empty number validation working correctly")
+    log(f"  - Error message: {data.get('detail')}")
+    
+    return True
 
-def test_rab_share_link(token, project_id):
-    """GET /api/projects/{id}/rab/share-link and public PDF"""
-    log(f"\n6. GET /api/projects/{project_id}/rab/share-link")
-    resp = requests.get(f"{BASE_URL}/projects/{project_id}/rab/share-link", headers={"Authorization": f"Bearer {token}"})
-    if resp.status_code != 200:
-        log(f"❌ RAB share-link failed: {resp.status_code} - {resp.text}")
-        sys.exit(1)
+def test_validation_invalid_type(token):
+    """Test 6: Validation - Invalid invoice type should return 400"""
+    log("=" * 80)
+    log("TEST 6: Validation - Invalid invoice type should return 400")
+    log("=" * 80)
     
-    data = resp.json()
-    slug = data.get("slug")
-    log(f"✅ Share link obtained: {slug}")
+    headers = {"Authorization": f"Bearer {token}"}
     
-    # Test public PDF access (no auth)
-    log(f"   Testing public PDF: GET /api/public/rab/{slug}/pdf")
-    resp = requests.get(f"{BASE_URL}/public/rab/{slug}/pdf")
-    if resp.status_code != 200:
-        log(f"❌ Public RAB PDF failed: {resp.status_code} - {resp.text}")
-        sys.exit(1)
+    invoice_data = {
+        "type": "foo",  # Invalid type
+        "number": "TEST/001",
+        "status": "Draft",
+        "clientName": "Test",
+        "items": [{"description": "Test", "qty": 1, "unitPrice": 1000000}],
+        "ppnEnabled": False,
+        "retentionEnabled": False
+    }
     
-    content_type = resp.headers.get("Content-Type", "")
-    pdf_bytes = resp.content
+    response = requests.post(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoices", 
+                            json=invoice_data, headers=headers)
     
-    log(f"✅ Public RAB PDF accessible")
-    log(f"   - Content-Type: {content_type}")
-    log(f"   - Size: {len(pdf_bytes)} bytes")
+    if response.status_code != 400:
+        log(f"❌ FAIL: Expected 400, got {response.status_code}")
+        log(f"Response: {response.text}")
+        return False
     
-    if content_type != "application/pdf" or not pdf_bytes.startswith(b"%PDF"):
-        log(f"❌ ERROR: Invalid public PDF!")
-        sys.exit(1)
+    data = response.json()
+    if "Tipe invoice tidak valid" not in data.get("detail", ""):
+        log(f"❌ FAIL: Wrong error message: {data.get('detail')}")
+        return False
     
-    log("✅ Public PDF valid")
+    log(f"✅ PASS: Invalid type validation working correctly")
+    log(f"  - Error message: {data.get('detail')}")
+    
+    return True
 
-def test_deal_to_progress(token, project_id):
-    """POST /api/projects/{id}/deal and verify progress mapping"""
-    log(f"\n7. POST /api/projects/{project_id}/deal - Convert to Berjalan")
-    resp = requests.post(f"{BASE_URL}/projects/{project_id}/deal", headers={"Authorization": f"Bearer {token}"})
-    if resp.status_code != 200:
-        log(f"❌ Deal failed: {resp.status_code} - {resp.text}")
-        sys.exit(1)
+def test_list_invoices(token):
+    """Test 7: GET /api/projects/{project_id}/invoices"""
+    log("=" * 80)
+    log("TEST 7: GET /api/projects/{project_id}/invoices")
+    log("=" * 80)
     
-    data = resp.json()
-    log(f"✅ Deal successful, status: {data.get('status')}")
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoices", headers=headers)
     
-    if data.get("status") != "Berjalan":
-        log(f"❌ ERROR: Status not changed to Berjalan!")
-        sys.exit(1)
+    if response.status_code != 200:
+        log(f"❌ FAIL: Status {response.status_code}")
+        log(f"Response: {response.text}")
+        return False
     
-    # GET progress-summary to verify work_items created
-    log(f"   GET /api/projects/{project_id}/progress-summary")
-    resp = requests.get(f"{BASE_URL}/projects/{project_id}/progress-summary", headers={"Authorization": f"Bearer {token}"})
-    if resp.status_code != 200:
-        log(f"❌ Progress summary failed: {resp.status_code} - {resp.text}")
-        sys.exit(1)
+    data = response.json()
     
-    progress = resp.json()
-    items = progress.get("items", [])
-    log(f"✅ Progress summary retrieved, {len(items)} work_items")
+    if not isinstance(data, list):
+        log(f"❌ FAIL: Expected list, got {type(data)}")
+        return False
     
-    # Verify 2 work_items created (PEKERJAAN PERSIAPAN, BEDROOM)
-    if len(items) != 2:
-        log(f"❌ ERROR: Expected 2 work_items, got {len(items)}")
-        sys.exit(1)
+    log(f"✅ PASS: Invoice list retrieved successfully")
+    log(f"  - Total invoices: {len(data)}")
     
-    # Verify work_item values match RAB section subtotals
-    # PEKERJAAN PERSIAPAN: 3500000
-    # BEDROOM: 9574500
-    expected_values = [3500000, 9574500]
-    for i, item in enumerate(items):
-        item_nilai = item.get("nilai", 0)
-        log(f"   - {item.get('name')}: nilai={item_nilai}, weight={item.get('weight')}%")
-        if item_nilai != expected_values[i]:
-            log(f"❌ ERROR: Work item nilai mismatch! Got {item_nilai}, expected {expected_values[i]}")
-            sys.exit(1)
+    if len(data) > 0:
+        # Verify newest first (descending order by createdAt)
+        log(f"  - First invoice: {data[0].get('number')} (type: {data[0].get('type')})")
+        
+        # Verify each has computed
+        for inv in data:
+            if "computed" not in inv:
+                log(f"❌ FAIL: Invoice {inv.get('id')} missing computed field")
+                return False
     
-    # Verify sub_items created
-    bedroom_item = items[1]
-    sub_items = bedroom_item.get("subItems", [])
-    log(f"   - BEDROOM has {len(sub_items)} sub_items")
-    
-    if len(sub_items) != 1:
-        log(f"❌ ERROR: Expected 1 sub_item for BEDROOM, got {len(sub_items)}")
-        sys.exit(1)
-    
-    # Verify sub_item harga matches RAB subItem nilai (9574500)
-    lemari_sub = sub_items[0]
-    lemari_harga = lemari_sub.get("harga", 0)
-    log(f"   - Lemari Pakaian sub_item: harga={lemari_harga} (expected: 9574500)")
-    
-    if lemari_harga != 9574500:
-        log(f"❌ ERROR: Sub_item harga mismatch!")
-        sys.exit(1)
-    
-    # Verify weights sum to ~100%
-    total_weight = sum(item.get("weight", 0) for item in items)
-    log(f"   - Total weight: {total_weight}% (expected: ~100%)")
-    
-    if abs(total_weight - 100) > 1:
-        log(f"❌ ERROR: Weights don't sum to 100%!")
-        sys.exit(1)
-    
-    log("✅ Deal-to-Progress mapping verified!")
-    
-    # Test idempotency: calling deal again should NOT duplicate work_items
-    log("   Testing idempotency: calling deal again...")
-    resp = requests.post(f"{BASE_URL}/projects/{project_id}/deal", headers={"Authorization": f"Bearer {token}"})
-    if resp.status_code != 200:
-        log(f"❌ Second deal call failed: {resp.status_code}")
-        sys.exit(1)
-    
-    resp = requests.get(f"{BASE_URL}/projects/{project_id}/progress-summary", headers={"Authorization": f"Bearer {token}"})
-    progress2 = resp.json()
-    items2 = progress2.get("items", [])
-    
-    if len(items2) != 2:
-        log(f"❌ ERROR: Deal not idempotent! Got {len(items2)} work_items after second call")
-        sys.exit(1)
-    
-    log("✅ Deal is idempotent (no duplicate work_items)")
+    return True
 
-def test_premium_gating(token):
-    """Test premium gating: free user should get 403"""
-    log("\n8. Premium gating: Register free user and test POST /api/rab")
+def test_get_single_invoice(token, invoice_id):
+    """Test 8: GET /api/invoices/{invoice_id}"""
+    log("=" * 80)
+    log("TEST 8: GET /api/invoices/{invoice_id}")
+    log("=" * 80)
     
-    # Register new free user
-    import time
-    email = f"test_rab_free_{int(time.time())}@test.com"
-    resp = requests.post(f"{BASE_URL}/auth/register", json={
-        "email": email,
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
+    
+    if response.status_code != 200:
+        log(f"❌ FAIL: Status {response.status_code}")
+        log(f"Response: {response.text}")
+        return False
+    
+    data = response.json()
+    
+    if data.get("id") != invoice_id:
+        log(f"❌ FAIL: ID mismatch. Expected {invoice_id}, got {data.get('id')}")
+        return False
+    
+    if "computed" not in data:
+        log(f"❌ FAIL: Missing computed field")
+        return False
+    
+    log(f"✅ PASS: Single invoice retrieved successfully")
+    log(f"  - Invoice ID: {data.get('id')}")
+    log(f"  - Number: {data.get('number')}")
+    log(f"  - Type: {data.get('type')}")
+    
+    return True
+
+def test_update_invoice(token, invoice_id):
+    """Test 9: PUT /api/invoices/{invoice_id}"""
+    log("=" * 80)
+    log("TEST 9: PUT /api/invoices/{invoice_id}")
+    log("=" * 80)
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # First get the invoice
+    response = requests.get(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
+    if response.status_code != 200:
+        log(f"❌ FAIL: Could not get invoice for update")
+        return False
+    
+    invoice = response.json()
+    
+    # Update status and change an item
+    update_data = {
+        "type": invoice.get("type"),
+        "number": invoice.get("number"),
+        "invoiceDate": invoice.get("invoiceDate"),
+        "dueDate": invoice.get("dueDate"),
+        "status": "Terkirim",  # Changed from Draft
+        "clientName": invoice.get("clientName"),
+        "clientAddress": invoice.get("clientAddress"),
+        "clientPhone": invoice.get("clientPhone"),
+        "items": [
+            {
+                "description": "Uang Muka (DP) 50% - Updated",  # Changed description
+                "qty": 1,
+                "unitPrice": 12000000  # Changed amount
+            }
+        ],
+        "ppnEnabled": invoice.get("ppnEnabled"),
+        "ppnPercent": invoice.get("ppnPercent"),
+        "retentionEnabled": invoice.get("retentionEnabled"),
+        "retentionPercent": invoice.get("retentionPercent"),
+        "companyName": invoice.get("companyName"),
+        "companyAddress": invoice.get("companyAddress", ""),
+        "companyPhone": invoice.get("companyPhone", ""),
+        "bankName": invoice.get("bankName"),
+        "bankAccount": invoice.get("bankAccount"),
+        "bankHolder": invoice.get("bankHolder"),
+        "signerLeft": invoice.get("signerLeft", ""),
+        "signerRight": invoice.get("signerRight", ""),
+        "signatureImage": invoice.get("signatureImage", ""),
+        "notes": invoice.get("notes")
+    }
+    
+    response = requests.put(f"{BASE_URL}/invoices/{invoice_id}", 
+                           json=update_data, headers=headers)
+    
+    if response.status_code != 200:
+        log(f"❌ FAIL: Status {response.status_code}")
+        log(f"Response: {response.text}")
+        return False
+    
+    data = response.json()
+    
+    if data.get("status") != "Terkirim":
+        log(f"❌ FAIL: Status not updated. Expected 'Terkirim', got {data.get('status')}")
+        return False
+    
+    # Verify computed recalculated
+    computed = data.get("computed", {})
+    expected_subtotal = 12000000
+    expected_ppn = round(12000000 * 11 / 100)  # 1320000
+    expected_gross = expected_subtotal + expected_ppn  # 13320000
+    
+    if computed.get("subtotal") != expected_subtotal:
+        log(f"❌ FAIL: Computed not recalculated correctly")
+        return False
+    
+    log(f"✅ PASS: Invoice updated successfully")
+    log(f"  - Status: {data.get('status')}")
+    log(f"  - New subtotal: Rp {computed['subtotal']:,}")
+    log(f"  - New amount due: Rp {computed['amountDue']:,}")
+    
+    return True
+
+def test_invoice_pdf(token, invoice_id, invoice_type):
+    """Test 10: GET /api/invoices/{invoice_id}/pdf?auth={token}"""
+    log("=" * 80)
+    log(f"TEST 10: GET /api/invoices/{invoice_id}/pdf?auth={{token}} (type: {invoice_type})")
+    log("=" * 80)
+    
+    response = requests.get(f"{BASE_URL}/invoices/{invoice_id}/pdf?auth={token}")
+    
+    if response.status_code != 200:
+        log(f"❌ FAIL: Status {response.status_code}")
+        log(f"Response: {response.text[:200]}")
+        return False
+    
+    content_type = response.headers.get("Content-Type", "")
+    if "application/pdf" not in content_type:
+        log(f"❌ FAIL: Wrong content type: {content_type}")
+        return False
+    
+    pdf_content = response.content
+    if not pdf_content.startswith(b"%PDF"):
+        log(f"❌ FAIL: Not a valid PDF (doesn't start with %PDF)")
+        return False
+    
+    log(f"✅ PASS: PDF generated successfully")
+    log(f"  - Content-Type: {content_type}")
+    log(f"  - Size: {len(pdf_content)} bytes")
+    log(f"  - Starts with: {pdf_content[:10]}")
+    
+    return True
+
+def test_premium_gating_free_user(token):
+    """Test 11: Premium gating - Free user should get 403"""
+    log("=" * 80)
+    log("TEST 11: Premium gating - Free user should get 403")
+    log("=" * 80)
+    
+    # Register a new free user
+    free_email = f"test_invoice_free_{int(time.time())}@test.com"
+    response = requests.post(f"{BASE_URL}/auth/register", json={
+        "email": free_email,
         "name": "Test Free User",
         "password": "Test123456"
     })
     
-    if resp.status_code != 200:
-        log(f"❌ Register failed: {resp.status_code} - {resp.text}")
-        sys.exit(1)
+    if response.status_code != 200:
+        log(f"❌ FAIL: Could not register free user. Status {response.status_code}")
+        return False
     
-    free_token = resp.json().get("token")
-    log(f"✅ Free user registered: {email}")
+    free_token = response.json().get("token")
     
-    # Try to create RAB with free user
-    body = {
-        "projectName": "Test RAB Free",
-        "category": "Residensial",
-        "rab": {
+    # Try to access invoice-context with free token
+    headers = {"Authorization": f"Bearer {free_token}"}
+    response = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoice-context", headers=headers)
+    
+    # Should get 403 or 404 (404 if project doesn't belong to free user)
+    if response.status_code == 404:
+        log(f"⚠️  Got 404 (project not found for free user) - trying to create invoice instead")
+        
+        # Try to create invoice (should also fail with 403 at require_premium level)
+        invoice_data = {
+            "type": "proforma",
+            "number": "TEST/001",
+            "status": "Draft",
             "clientName": "Test",
-            "sections": [],
-            "termins": []
+            "items": [{"description": "Test", "qty": 1, "unitPrice": 1000000}],
+            "ppnEnabled": False,
+            "retentionEnabled": False
         }
-    }
+        
+        # First need to create a project for the free user
+        project_response = requests.post(f"{BASE_URL}/projects", json={
+            "name": "Test Project Free",
+            "nominal": 10000000
+        }, headers=headers)
+        
+        if project_response.status_code == 200:
+            free_project_id = project_response.json().get("id")
+            
+            # Now try to create invoice
+            response = requests.post(f"{BASE_URL}/projects/{free_project_id}/invoices", 
+                                    json=invoice_data, headers=headers)
+            
+            if response.status_code != 403:
+                log(f"❌ FAIL: Expected 403, got {response.status_code}")
+                log(f"Response: {response.text}")
+                return False
+            
+            log(f"✅ PASS: Free user correctly blocked with 403")
+            return True
     
-    resp = requests.post(f"{BASE_URL}/rab", json=body, headers={"Authorization": f"Bearer {free_token}"})
+    if response.status_code != 403:
+        log(f"❌ FAIL: Expected 403, got {response.status_code}")
+        log(f"Response: {response.text}")
+        return False
     
-    if resp.status_code != 403:
-        log(f"❌ ERROR: Free user should get 403, got {resp.status_code}")
-        sys.exit(1)
+    log(f"✅ PASS: Free user correctly blocked with 403")
     
-    log(f"✅ Free user correctly blocked with 403")
+    return True
 
-def test_demo_gating():
-    """Test demo gating: demo user should get 403 on POST /api/rab"""
-    log("\n9. Demo gating: Demo user should get 403 on POST /api/rab")
+def test_demo_gating(token):
+    """Test 12: Demo gating - Demo user should get 403 on write operations"""
+    log("=" * 80)
+    log("TEST 12: Demo gating - Demo user should get 403 on write operations")
+    log("=" * 80)
     
     # Get demo token
-    resp = requests.post(f"{BASE_URL}/auth/demo")
-    if resp.status_code != 200:
-        log(f"❌ Demo login failed: {resp.status_code}")
-        sys.exit(1)
+    response = requests.post(f"{BASE_URL}/auth/demo")
     
-    demo_token = resp.json().get("token")
-    log(f"✅ Demo user logged in")
+    if response.status_code != 200:
+        log(f"❌ FAIL: Could not get demo token. Status {response.status_code}")
+        return False
     
-    # Try to create RAB with demo user
-    body = {
-        "projectName": "Test RAB Demo",
-        "category": "Residensial",
-        "rab": {
-            "clientName": "Test",
-            "sections": [],
-            "termins": []
-        }
+    demo_token = response.json().get("token")
+    
+    # Get demo projects
+    headers = {"Authorization": f"Bearer {demo_token}"}
+    response = requests.get(f"{BASE_URL}/projects", headers=headers)
+    
+    if response.status_code != 200 or not response.json():
+        log(f"❌ FAIL: Could not get demo projects")
+        return False
+    
+    demo_project_id = response.json()[0].get("id")
+    
+    # Try to create invoice with demo token (should fail with 403)
+    invoice_data = {
+        "type": "proforma",
+        "number": "DEMO/001",
+        "status": "Draft",
+        "clientName": "Demo Client",
+        "items": [{"description": "Demo", "qty": 1, "unitPrice": 1000000}],
+        "ppnEnabled": False,
+        "retentionEnabled": False
     }
     
-    resp = requests.post(f"{BASE_URL}/rab", json=body, headers={"Authorization": f"Bearer {demo_token}"})
+    response = requests.post(f"{BASE_URL}/projects/{demo_project_id}/invoices", 
+                            json=invoice_data, headers=headers)
     
-    if resp.status_code != 403:
-        log(f"❌ ERROR: Demo user should get 403, got {resp.status_code}")
-        log(f"   Response: {resp.text}")
-        sys.exit(1)
+    if response.status_code != 403:
+        log(f"❌ FAIL: Expected 403, got {response.status_code}")
+        log(f"Response: {response.text}")
+        return False
     
-    log(f"✅ Demo user correctly blocked with 403 (read-only mode)")
+    data = response.json()
+    if "Mode Demo" not in data.get("detail", ""):
+        log(f"⚠️  Warning: Expected 'Mode Demo' in error message, got: {data.get('detail')}")
+    
+    log(f"✅ PASS: Demo user correctly blocked with 403")
+    log(f"  - Error message: {data.get('detail')}")
+    
+    return True
+
+def test_rab_pdf_regression(token):
+    """Test 13: Regression - RAB PDF should still work (titled QUOTATION)"""
+    log("=" * 80)
+    log("TEST 13: Regression - RAB PDF should still work (titled QUOTATION)")
+    log("=" * 80)
+    
+    # Check if project has RAB
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/rab", headers=headers)
+    
+    if response.status_code == 404:
+        log(f"⚠️  SKIP: Project has no RAB, cannot test RAB PDF")
+        return True
+    
+    if response.status_code != 200:
+        log(f"❌ FAIL: Could not get RAB. Status {response.status_code}")
+        return False
+    
+    # Try to get RAB PDF
+    response = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/rab/pdf?auth={token}")
+    
+    if response.status_code != 200:
+        log(f"❌ FAIL: RAB PDF failed. Status {response.status_code}")
+        log(f"Response: {response.text[:200]}")
+        return False
+    
+    content_type = response.headers.get("Content-Type", "")
+    if "application/pdf" not in content_type:
+        log(f"❌ FAIL: Wrong content type: {content_type}")
+        return False
+    
+    pdf_content = response.content
+    if not pdf_content.startswith(b"%PDF"):
+        log(f"❌ FAIL: Not a valid PDF")
+        return False
+    
+    log(f"✅ PASS: RAB PDF still working")
+    log(f"  - Size: {len(pdf_content)} bytes")
+    log(f"  - Note: Cannot verify 'QUOTATION' title without parsing PDF, but PDF generates successfully")
+    
+    return True
+
+def test_delete_invoice(token, invoice_id):
+    """Test 14: DELETE /api/invoices/{invoice_id}"""
+    log("=" * 80)
+    log("TEST 14: DELETE /api/invoices/{invoice_id}")
+    log("=" * 80)
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.delete(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
+    
+    if response.status_code != 200:
+        log(f"❌ FAIL: Status {response.status_code}")
+        log(f"Response: {response.text}")
+        return False
+    
+    data = response.json()
+    if not data.get("ok"):
+        log(f"❌ FAIL: Delete did not return ok:true")
+        return False
+    
+    # Verify invoice is deleted (should get 404)
+    response = requests.get(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
+    
+    if response.status_code != 404:
+        log(f"❌ FAIL: Invoice still exists after delete. Status {response.status_code}")
+        return False
+    
+    log(f"✅ PASS: Invoice deleted successfully")
+    log(f"  - Subsequent GET returns 404")
+    
+    return True
 
 def main():
-    log("=" * 60)
-    log("RAB BUILDER (SURAT PENAWARAN) BACKEND TEST")
-    log("=" * 60)
+    print("\n" + "=" * 80)
+    print("INVOICE ENDPOINTS TEST SUITE")
+    print("=" * 80 + "\n")
     
-    try:
-        # 1. Login premium
-        token = test_login_premium()
-        
-        # 2. Create RAB with materials and verify math
-        project_id = test_create_rab(token)
-        
-        # 3. GET RAB
-        rab_slug = test_get_rab(token, project_id)
-        
-        # 4. Update RAB (change discount)
-        test_update_rab(token, project_id)
-        
-        # 5. RAB PDF
-        test_rab_pdf(token, project_id)
-        
-        # 6. Share link and public PDF
-        test_rab_share_link(token, project_id)
-        
-        # 7. Deal to Progress
-        test_deal_to_progress(token, project_id)
-        
-        # 8. Premium gating
-        test_premium_gating(token)
-        
-        # 9. Demo gating
-        test_demo_gating()
-        
-        log("\n" + "=" * 60)
-        log("✅ ALL RAB BUILDER TESTS PASSED!")
-        log("=" * 60)
-        
-    except Exception as e:
-        log(f"\n❌ TEST FAILED WITH EXCEPTION: {e}")
-        import traceback
-        traceback.print_exc()
+    # Test 1: Login
+    token = test_login()
+    if not token:
+        log("\n❌ CRITICAL: Cannot proceed without token")
         sys.exit(1)
+    
+    # Test 2: Invoice context
+    test_invoice_context(token)
+    
+    # Test 3: Create proforma invoice
+    proforma_id = test_create_proforma_invoice(token)
+    
+    # Test 4: Create final invoice with retention
+    final_id = test_create_final_invoice_with_retention(token)
+    
+    # Test 5-6: Validation tests
+    test_validation_empty_number(token)
+    test_validation_invalid_type(token)
+    
+    # Test 7: List invoices
+    test_list_invoices(token)
+    
+    # Test 8-9: Get and update invoice
+    if proforma_id:
+        test_get_single_invoice(token, proforma_id)
+        test_update_invoice(token, proforma_id)
+    
+    # Test 10: PDF generation
+    if proforma_id:
+        test_invoice_pdf(token, proforma_id, "proforma")
+    if final_id:
+        test_invoice_pdf(token, final_id, "final")
+    
+    # Test 11-12: Premium and demo gating
+    test_premium_gating_free_user(token)
+    test_demo_gating(token)
+    
+    # Test 13: RAB PDF regression
+    test_rab_pdf_regression(token)
+    
+    # Test 14: Delete invoices (cleanup)
+    if proforma_id:
+        test_delete_invoice(token, proforma_id)
+    if final_id:
+        test_delete_invoice(token, final_id)
+    
+    # Summary
+    print("\n" + "=" * 80)
+    print("TEST SUMMARY")
+    print("=" * 80)
+    
+    passed = sum(1 for r in results if "✅ PASS" in r)
+    failed = sum(1 for r in results if "❌ FAIL" in r)
+    skipped = sum(1 for r in results if "⚠️  SKIP" in r)
+    
+    print(f"\nTotal tests: {passed + failed + skipped}")
+    print(f"✅ Passed: {passed}")
+    print(f"❌ Failed: {failed}")
+    print(f"⚠️  Skipped: {skipped}")
+    
+    if failed > 0:
+        print("\n❌ SOME TESTS FAILED")
+        sys.exit(1)
+    else:
+        print("\n✅ ALL TESTS PASSED")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()

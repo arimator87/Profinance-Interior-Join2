@@ -39,3 +39,13 @@ export function pdfUrl(projectId) {
   const token = localStorage.getItem("pf_token");
   return `${API}/projects/${projectId}/report/pdf?auth=${encodeURIComponent(token || "")}`;
 }
+
+export function rabPdfUrl(projectId) {
+  const token = localStorage.getItem("pf_token");
+  return `${API}/projects/${projectId}/rab/pdf?auth=${encodeURIComponent(token || "")}`;
+}
+
+export function invoicePdfUrl(invoiceId) {
+  const token = localStorage.getItem("pf_token");
+  return `${API}/invoices/${invoiceId}/pdf?auth=${encodeURIComponent(token || "")}`;
+}

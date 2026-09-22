@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { api, fileUrl } from "@/lib/api";
+import { api, fileUrl, rabPdfUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Header } from "@/components/Header";
 import { HealthBadge } from "@/components/HealthBadge";
 import { Paywall } from "@/components/Paywall";
 import { AddProjectDialog } from "@/components/AddProjectDialog";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -16,9 +17,11 @@ import { CashFlowTab } from "@/components/tabs/CashFlowTab";
 import { TukangTab } from "@/components/tabs/TukangTab";
 import { ProgressTab } from "@/components/tabs/ProgressTab";
 import { ReportTab } from "@/components/tabs/ReportTab";
+import { InvoiceTab } from "@/components/tabs/InvoiceTab";
 import {
   ArrowLeft, Loader2, Wallet, TrendingUp, Receipt, Building2, Trash2, Lock,
   Wallet2, ListChecks, FileBarChart, Crown, MapPin, Calendar, Pencil, Briefcase, Download,
+  ReceiptText, FileText,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { defaultCatImage } from "@/lib/catimage";
@@ -46,6 +49,7 @@ export default function ProjectDetail() {
   const [tab, setTab] = useState("cashflow");
   const [editOpen, setEditOpen] = useState(false);
   const [backing, setBacking] = useState(false);
+  const [invoiceSignal, setInvoiceSignal] = useState(0);
 
   const loadProject = useCallback(async () => {
     try {
@@ -113,6 +117,14 @@ export default function ProjectDetail() {
   const catImg = catObj?.imageUrl ? fileUrl(catObj.imageUrl) : null;
   const chipImg = catImg || defaultCatImage(project.category);
   const headerImg = project.thumbnail ? fileUrl(project.thumbnail) : (catImg || defaultCatImage(project.category));
+  const rabDoc = project.rab || {};
+  const hasRab = !!(rabDoc && ((rabDoc.sections && rabDoc.sections.length) || project.status === "Prospek" || project.rabTotal));
+
+  const openCreateInvoice = () => {
+    if (!isPremium) { setTab("invoice"); return; }
+    setTab("invoice");
+    setInvoiceSignal((n) => n + 1);
+  };
 
   const TabTrigger = ({ value, icon: Icon, label, premium, testid }) => (
     <TabsTrigger value={value} data-testid={testid} className="gap-1.5 data-[state=active]:bg-white data-[state=active]:text-amber-700 data-[state=active]:shadow-sm relative">
@@ -173,10 +185,22 @@ export default function ProjectDetail() {
           </div>
         </Card>
 
+        <div className="flex items-center gap-2 mb-5 flex-wrap">
+          <Button data-testid="btn-create-invoice" onClick={openCreateInvoice} className="bg-amber-600 hover:bg-amber-700 text-white gap-2">
+            <ReceiptText className="w-4 h-4" /> Buat Invoice
+          </Button>
+          {hasRab && (
+            <Button data-testid="btn-view-quotation" variant="outline" onClick={() => window.open(rabPdfUrl(project.id), "_blank")} className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50">
+              <FileText className="w-4 h-4" /> Lihat Quotation (RAB)
+            </Button>
+          )}
+        </div>
+
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="grid grid-cols-4 w-full bg-slate-100 p-1 h-auto">
+          <TabsList className="grid grid-cols-5 w-full bg-slate-100 p-1 h-auto">
             <TabTrigger value="cashflow" icon={Wallet2} label="Cash Flow" testid="tab-cashflow" />
             <TabTrigger value="tukang" icon={Wallet} label="Tukang" testid="tab-tukang" />
+            <TabTrigger value="invoice" icon={ReceiptText} label="Invoice" premium testid="tab-invoice" />
             <TabTrigger value="progress" icon={ListChecks} label="Progress" premium testid="tab-progress" />
             <TabTrigger value="report" icon={FileBarChart} label="Report" premium testid="tab-report" />
           </TabsList>
@@ -186,6 +210,19 @@ export default function ProjectDetail() {
           </TabsContent>
           <TabsContent value="tukang" className="mt-5">
             <TukangTab project={project} workers={workers} onChange={refreshFinance} />
+          </TabsContent>
+          <TabsContent value="invoice" className="mt-5">
+            {isPremium ? <InvoiceTab project={project} createSignal={invoiceSignal} /> : (
+              <Paywall testid="paywall-banner-invoice" title="Invoice & Proforma (Premium)"
+                features={[
+                  "Proforma Invoice untuk DP & termin pembayaran",
+                  "Invoice final saat pelunasan/serah terima",
+                  "Invoice Retensi untuk masa pemeliharaan",
+                  "Hitung PPN & retensi otomatis (kaidah yang benar)",
+                  "Riwayat invoice + status Draft/Terkirim/Lunas",
+                  "Export PDF profesional & share ke WhatsApp",
+                ]} />
+            )}
           </TabsContent>
           <TabsContent value="progress" className="mt-5">
             {isPremium ? <ProgressTab project={project} /> : (
