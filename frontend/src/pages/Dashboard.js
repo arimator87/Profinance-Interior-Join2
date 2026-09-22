@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Header } from "@/components/Header";
 import { HealthBadge } from "@/components/HealthBadge";
@@ -35,6 +35,7 @@ export default function Dashboard() {
   const { user, isPremium } = useAuth();
   const [stats, setStats] = useState(null);
   const [projects, setProjects] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [filter, setFilter] = useState("Semua");
@@ -53,6 +54,17 @@ export default function Dashboard() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    api.get("/work-categories")
+      .then((r) => { if (Array.isArray(r.data)) setCategories(r.data); })
+      .catch(() => {});
+  }, []);
+
+  const catImage = (name) => {
+    const c = categories.find((x) => (x.name || "").toLowerCase() === (name || "").toLowerCase());
+    return c?.imageUrl ? fileUrl(c.imageUrl) : null;
+  };
 
   const seedDemo = async () => {
     setSeeding(true);
@@ -144,13 +156,15 @@ export default function Dashboard() {
           </Card>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filtered.map((p, i) => (
+            {filtered.map((p, i) => {
+              const cImg = catImage(p.category);
+              return (
               <motion.div key={p.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
                 <Card data-testid={`project-card-${p.id}`} onClick={() => navigate(p.status === "Prospek" ? `/rab/${p.id}` : `/project/${p.id}`)}
                   className="overflow-hidden border-slate-200 bg-white hover:shadow-lg hover:-translate-y-0.5 transition-all cursor-pointer group">
                   <div className="h-32 relative overflow-hidden bg-slate-100">
-                    {p.thumbnail ? (
-                      <img src={p.thumbnail} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                    {p.thumbnail || cImg ? (
+                      <img src={p.thumbnail || cImg} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center"><Building2 className="w-10 h-10 text-slate-300" /></div>
                     )}
@@ -165,7 +179,18 @@ export default function Dashboard() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <h3 className="font-display font-bold text-slate-900 truncate">{p.name}</h3>
-                        <p className="text-xs text-slate-500 truncate">{p.owner || "-"} · {p.category}</p>
+                        <div className="flex items-center gap-1 text-xs text-slate-500 min-w-0">
+                          <span className="truncate">{p.owner || "-"}</span>
+                          {p.category && (
+                            <span className="flex items-center gap-1.5 min-w-0 shrink-0 max-w-[55%]">
+                              <span>·</span>
+                              {cImg && (
+                                <img src={cImg} alt={p.category} data-testid={`project-card-cat-img-${p.id}`} className="w-4 h-4 rounded object-cover shrink-0" />
+                              )}
+                              <span className="truncate">{p.category}</span>
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <ArrowUpRight className="w-4 h-4 text-slate-300 group-hover:text-amber-600 shrink-0 mt-1" />
                     </div>
@@ -190,7 +215,8 @@ export default function Dashboard() {
                   </div>
                 </Card>
               </motion.div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>

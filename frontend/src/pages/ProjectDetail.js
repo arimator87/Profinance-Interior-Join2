@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, fileUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Header } from "@/components/Header";
 import { HealthBadge } from "@/components/HealthBadge";
@@ -18,7 +18,7 @@ import { ProgressTab } from "@/components/tabs/ProgressTab";
 import { ReportTab } from "@/components/tabs/ReportTab";
 import {
   ArrowLeft, Loader2, Wallet, TrendingUp, Receipt, Building2, Trash2, Lock,
-  Wallet2, ListChecks, FileBarChart, Crown, MapPin, Calendar, Pencil, Briefcase, Download,
+  Wallet2, ListChecks, FileBarChart, Crown, MapPin, Calendar, Pencil, Briefcase, Download, Layers,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -40,6 +40,7 @@ export default function ProjectDetail() {
   const [project, setProject] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [workers, setWorkers] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("cashflow");
   const [editOpen, setEditOpen] = useState(false);
@@ -58,6 +59,12 @@ export default function ProjectDetail() {
   }, [id, navigate]);
 
   useEffect(() => { loadProject(); }, [loadProject]);
+
+  useEffect(() => {
+    api.get("/work-categories")
+      .then((r) => { if (Array.isArray(r.data)) setCategories(r.data); })
+      .catch(() => {});
+  }, []);
 
   const refreshFinance = async () => {
     const [p, t, w] = await Promise.all([
@@ -101,6 +108,9 @@ export default function ProjectDetail() {
 
   const s = project.summary;
 
+  const catObj = categories.find((x) => (x.name || "").toLowerCase() === (project.category || "").toLowerCase());
+  const catImg = catObj?.imageUrl ? fileUrl(catObj.imageUrl) : null;
+
   const TabTrigger = ({ value, icon: Icon, label, premium, testid }) => (
     <TabsTrigger value={value} data-testid={testid} className="gap-1.5 data-[state=active]:bg-white data-[state=active]:text-amber-700 data-[state=active]:shadow-sm relative">
       <Icon className="w-4 h-4" /> <span className="hidden sm:inline">{label}</span>
@@ -118,7 +128,7 @@ export default function ProjectDetail() {
 
         <Card className="overflow-hidden border-slate-200 bg-white mb-5">
           <div className="h-36 sm:h-44 relative bg-slate-100">
-            {project.thumbnail ? <img src={project.thumbnail} alt={project.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Building2 className="w-12 h-12 text-slate-300" /></div>}
+            {project.thumbnail || catImg ? <img src={project.thumbnail || catImg} alt={project.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Building2 className="w-12 h-12 text-slate-300" /></div>}
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
             <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5 flex items-end justify-between gap-3">
               <div className="min-w-0">
@@ -126,6 +136,14 @@ export default function ProjectDetail() {
                 <h1 className="font-display text-xl sm:text-2xl font-extrabold text-white tracking-tight truncate">{project.name}</h1>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-white/80 text-xs mt-1">
                   <span className="flex items-center gap-1"><Building2 className="w-3 h-3" /> {project.owner || "-"}</span>
+                  {project.category && (
+                    <span data-testid="project-category-chip" className="flex items-center gap-1">
+                      {catImg
+                        ? <img src={catImg} alt={project.category} className="w-4 h-4 rounded object-cover" />
+                        : <Layers className="w-3 h-3" />}
+                      {project.category}
+                    </span>
+                  )}
                   {project.companyName && project.companyName !== "-" && <span className="flex items-center gap-1"><Briefcase className="w-3 h-3" /> {project.companyName}</span>}
                   {project.alamatProyek && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {project.alamatProyek}</span>}
                   <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {fmtDate(project.targetSelesai)}</span>
