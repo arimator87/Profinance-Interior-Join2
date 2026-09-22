@@ -1,358 +1,378 @@
 #!/usr/bin/env python3
 """
-Backend test for ProFinance Interior - Promo Expiry + Announcement Theme
-Tests the promo countdown expiry and announcement theme backend changes.
+Backend API Test Suite for ProFinance Interior
+Testing: Demo client portal link survives daily demo reset
 """
-import os
-import sys
+
+import requests
+import time
 import json
-import httpx
-from datetime import datetime
-from pathlib import Path
-from pymongo import MongoClient
+import sys
+from typing import Dict, Any
 
-# Load environment variables
-ROOT_DIR = Path(__file__).parent
-sys.path.insert(0, str(ROOT_DIR / "backend"))
+# Backend URL from frontend/.env
+BASE_URL = "https://fintech-design-6.preview.emergentagent.com/api"
+WEBHOOK_CRON_SECRET = "pf_cron_9x2Kv7Qr4mB1nZ6sL0aWd3Ht8Yc5Ep"
 
-# Get configuration from environment
-BACKEND_URL = "https://fintech-design-6.preview.emergentagent.com/api"
-MONGO_URL = "mongodb://localhost:27017"
-DB_NAME = "test_database"
+class Colors:
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    END = '\033[0m'
 
-# Test results
-test_results = []
+def log_test(name: str):
+    print(f"\n{Colors.BLUE}{'='*80}{Colors.END}")
+    print(f"{Colors.BLUE}TEST: {name}{Colors.END}")
+    print(f"{Colors.BLUE}{'='*80}{Colors.END}")
 
-def log_test(test_name, passed, details=""):
-    """Log test result"""
-    status = "✅ PASS" if passed else "❌ FAIL"
-    test_results.append({
-        "test": test_name,
-        "passed": passed,
-        "details": details
-    })
-    print(f"{status}: {test_name}")
-    if details:
-        print(f"  Details: {details}")
+def log_pass(msg: str):
+    print(f"{Colors.GREEN}✓ PASS: {msg}{Colors.END}")
 
-def get_mongo_client():
-    """Get MongoDB client"""
-    return MongoClient(MONGO_URL)
+def log_fail(msg: str):
+    print(f"{Colors.RED}✗ FAIL: {msg}{Colors.END}")
 
-def backup_settings():
-    """Backup current settings to verify restoration"""
-    client = get_mongo_client()
-    db = client[DB_NAME]
-    settings = db.settings.find_one({"id": "app_settings"}, {"_id": 0})
-    client.close()
-    return settings
+def log_info(msg: str):
+    print(f"{Colors.YELLOW}ℹ INFO: {msg}{Colors.END}")
 
-def restore_settings_from_snapshot():
-    """Restore settings from snapshot file"""
-    snapshot_path = ROOT_DIR / "memory" / "settings_backup.json"
-    with open(snapshot_path, 'r') as f:
-        snapshot = json.load(f)
+def test_demo_portal_link_survives_reset():
+    """
+    Test that client portal links from demo account survive the daily reset cron.
     
-    client = get_mongo_client()
-    db = client[DB_NAME]
+    Bug: Previously, POST /api/cron/reset-demo deleted all demo projects and re-seeded
+    them with new IDs but WITHOUT portalSlug, causing 404 on previously shared links.
     
-    # Replace the entire document (except _id)
-    db.settings.replace_one(
-        {"id": "app_settings"},
-        snapshot,
-        upsert=True
-    )
-    client.close()
-    return snapshot
+    Fix: (1) seed_demo assigns stable "-demo" slugs; (2) _reset_demo_job preserves
+    existing slugs by name before deletion and re-applies them after re-seeding.
+    """
+    
+    # Step 1: Get demo token
+    log_test("Step 1: Get demo account token")
+    try:
+        resp = requests.post(f"{BASE_URL}/auth/demo", timeout=10)
+        log_info(f"POST /api/auth/demo -> {resp.status_code}")
+        
+        if resp.status_code != 200:
+            log_fail(f"Expected 200, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        data = resp.json()
+        demo_token = data.get("token")
+        if not demo_token:
+            log_fail("No token in response")
+            return False
+        
+        log_pass(f"Got demo token (length: {len(demo_token)})")
+        
+    except Exception as e:
+        log_fail(f"Exception during demo login: {e}")
+        return False
+    
+    # Step 2: Get projects and their portal links
+    log_test("Step 2: Get demo projects and portal links")
+    headers = {"Authorization": f"Bearer {demo_token}"}
+    
+    try:
+        resp = requests.get(f"{BASE_URL}/projects", headers=headers, timeout=10)
+        log_info(f"GET /api/projects -> {resp.status_code}")
+        
+        if resp.status_code != 200:
+            log_fail(f"Expected 200, got {resp.status_code}")
+            return False
+        
+        projects = resp.json()
+        if not projects or len(projects) == 0:
+            log_fail("No projects found in demo account")
+            return False
+        
+        log_pass(f"Found {len(projects)} demo projects")
+        
+        # Get portal links for all projects
+        project_data = []
+        for p in projects:
+            pid = p.get("id")
+            pname = p.get("name")
+            
+            resp = requests.get(f"{BASE_URL}/projects/{pid}/portal-link", headers=headers, timeout=10)
+            log_info(f"GET /api/projects/{pid}/portal-link -> {resp.status_code}")
+            
+            if resp.status_code != 200:
+                log_fail(f"Expected 200 for project {pname}, got {resp.status_code}")
+                return False
+            
+            link_data = resp.json()
+            slug = link_data.get("slug")
+            
+            if not slug:
+                log_fail(f"No slug returned for project {pname}")
+                return False
+            
+            project_data.append({
+                "id": pid,
+                "name": pname,
+                "slug": slug
+            })
+            log_pass(f"Project '{pname}' (id: {pid[:8]}...) has slug: {slug}")
+        
+    except Exception as e:
+        log_fail(f"Exception during project fetch: {e}")
+        return False
+    
+    # Step 3: Test public portal access (no auth) BEFORE reset
+    log_test("Step 3: Test public portal access (no auth) BEFORE reset")
+    
+    test_slug = project_data[0]["slug"]
+    
+    try:
+        # Test /api/public/portal/{slug}
+        resp = requests.get(f"{BASE_URL}/public/portal/{test_slug}", timeout=10)
+        log_info(f"GET /api/public/portal/{test_slug} -> {resp.status_code}")
+        
+        if resp.status_code != 200:
+            log_fail(f"Expected 200, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        portal_data = resp.json()
+        if not portal_data.get("project"):
+            log_fail("No project data in portal response")
+            return False
+        
+        log_pass(f"Public portal returns project: {portal_data['project'].get('name')}")
+        
+        # Test /api/public/portal/{slug}/share
+        resp = requests.get(f"{BASE_URL}/public/portal/{test_slug}/share", timeout=10)
+        log_info(f"GET /api/public/portal/{test_slug}/share -> {resp.status_code}")
+        
+        if resp.status_code != 200:
+            log_fail(f"Expected 200, got {resp.status_code}")
+            return False
+        
+        html_content = resp.text
+        if "/portal/" not in html_content:
+            log_fail("Share page doesn't contain portal redirect")
+            return False
+        
+        log_pass(f"Share page returns HTML with redirect (length: {len(html_content)} bytes)")
+        
+    except Exception as e:
+        log_fail(f"Exception during public portal access: {e}")
+        return False
+    
+    # Step 4: CRITICAL - Trigger the daily reset cron
+    log_test("Step 4: CRITICAL - Trigger daily demo reset cron")
+    
+    try:
+        # First test: unauthorized access should fail
+        resp = requests.post(f"{BASE_URL}/cron/reset-demo", timeout=10)
+        log_info(f"POST /api/cron/reset-demo (no auth) -> {resp.status_code}")
+        
+        if resp.status_code != 401:
+            log_fail(f"Expected 401 for unauthorized, got {resp.status_code}")
+            return False
+        
+        log_pass("Unauthorized cron access correctly returns 401")
+        
+        # Now trigger with correct auth
+        cron_headers = {"Authorization": f"Bearer {WEBHOOK_CRON_SECRET}"}
+        resp = requests.post(f"{BASE_URL}/cron/reset-demo", headers=cron_headers, timeout=10)
+        log_info(f"POST /api/cron/reset-demo (with auth) -> {resp.status_code}")
+        
+        if resp.status_code != 200:
+            log_fail(f"Expected 200, got {resp.status_code}")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        cron_result = resp.json()
+        if not cron_result.get("ok") or not cron_result.get("queued"):
+            log_fail(f"Unexpected cron response: {cron_result}")
+            return False
+        
+        log_pass("Reset cron triggered successfully: {ok: true, queued: true}")
+        log_info("Waiting 5 seconds for background job to complete...")
+        time.sleep(5)
+        
+    except Exception as e:
+        log_fail(f"Exception during cron trigger: {e}")
+        return False
+    
+    # Step 5: Verify project IDs changed BUT slugs preserved
+    log_test("Step 5: Verify project IDs changed BUT slugs preserved")
+    
+    try:
+        resp = requests.get(f"{BASE_URL}/projects", headers=headers, timeout=10)
+        log_info(f"GET /api/projects (after reset) -> {resp.status_code}")
+        
+        if resp.status_code != 200:
+            log_fail(f"Expected 200, got {resp.status_code}")
+            return False
+        
+        new_projects = resp.json()
+        if len(new_projects) != len(projects):
+            log_fail(f"Project count changed: {len(projects)} -> {len(new_projects)}")
+            return False
+        
+        log_pass(f"Project count unchanged: {len(new_projects)}")
+        
+        # Check that IDs changed (proving reset happened)
+        old_ids = {p["id"] for p in project_data}
+        new_ids = {p["id"] for p in new_projects}
+        
+        if old_ids == new_ids:
+            log_fail("Project IDs did NOT change - reset may not have happened!")
+            return False
+        
+        log_pass(f"Project IDs changed (reset confirmed): {len(old_ids & new_ids)} common IDs")
+        
+        # Check that slugs are preserved
+        slugs_preserved = 0
+        slugs_changed = 0
+        
+        for old_proj in project_data:
+            old_name = old_proj["name"]
+            old_slug = old_proj["slug"]
+            
+            # Find matching project by name in new projects
+            new_proj = next((p for p in new_projects if p.get("name") == old_name), None)
+            if not new_proj:
+                log_fail(f"Project '{old_name}' not found after reset")
+                return False
+            
+            new_id = new_proj["id"]
+            
+            # Get new portal link
+            resp = requests.get(f"{BASE_URL}/projects/{new_id}/portal-link", headers=headers, timeout=10)
+            if resp.status_code != 200:
+                log_fail(f"Failed to get portal link for '{old_name}' after reset")
+                return False
+            
+            new_slug = resp.json().get("slug")
+            
+            if new_slug == old_slug:
+                slugs_preserved += 1
+                log_pass(f"✓ PRESERVED: '{old_name}' kept slug '{old_slug}'")
+            else:
+                slugs_changed += 1
+                log_fail(f"✗ CHANGED: '{old_name}' slug changed from '{old_slug}' to '{new_slug}'")
+        
+        if slugs_changed > 0:
+            log_fail(f"CRITICAL: {slugs_changed} slugs changed after reset!")
+            return False
+        
+        log_pass(f"ALL {slugs_preserved} portal slugs preserved after reset!")
+        
+    except Exception as e:
+        log_fail(f"Exception during post-reset verification: {e}")
+        return False
+    
+    # Step 6: Re-check public portal access AFTER reset (the bug test!)
+    log_test("Step 6: CRITICAL - Verify old links still work AFTER reset")
+    
+    try:
+        # Test the SAME slug from before reset
+        resp = requests.get(f"{BASE_URL}/public/portal/{test_slug}", timeout=10)
+        log_info(f"GET /api/public/portal/{test_slug} (after reset) -> {resp.status_code}")
+        
+        if resp.status_code != 200:
+            log_fail(f"CRITICAL BUG: Old portal link returns {resp.status_code} after reset!")
+            log_info(f"Response: {resp.text}")
+            return False
+        
+        portal_data = resp.json()
+        log_pass(f"✓ Old portal link STILL WORKS: {portal_data['project'].get('name')}")
+        
+        # Test share page
+        resp = requests.get(f"{BASE_URL}/public/portal/{test_slug}/share", timeout=10)
+        log_info(f"GET /api/public/portal/{test_slug}/share (after reset) -> {resp.status_code}")
+        
+        if resp.status_code != 200:
+            log_fail(f"CRITICAL BUG: Old share link returns {resp.status_code} after reset!")
+            return False
+        
+        log_pass("✓ Old share link STILL WORKS after reset")
+        
+        # Test a few more slugs to be thorough
+        for proj in project_data[1:]:
+            slug = proj["slug"]
+            resp = requests.get(f"{BASE_URL}/public/portal/{slug}", timeout=10)
+            if resp.status_code != 200:
+                log_fail(f"Portal link for '{proj['name']}' broken after reset: {resp.status_code}")
+                return False
+            log_pass(f"✓ Portal link for '{proj['name']}' still works")
+        
+    except Exception as e:
+        log_fail(f"Exception during post-reset portal access: {e}")
+        return False
+    
+    # Step 7: Regression test - portal-link/reset blocked for demo (read-only)
+    log_test("Step 7: Regression test - portal-link/reset blocked for demo user")
+    
+    try:
+        # Pick first project
+        test_project = new_projects[0]
+        test_id = test_project["id"]
+        test_name = test_project["name"]
+        
+        # Get current slug
+        resp = requests.get(f"{BASE_URL}/projects/{test_id}/portal-link", headers=headers, timeout=10)
+        if resp.status_code != 200:
+            log_fail("Failed to get current portal link")
+            return False
+        
+        old_slug = resp.json().get("slug")
+        log_info(f"Current slug for '{test_name}': {old_slug}")
+        
+        # Reset portal link - should be blocked for demo user (read-only)
+        resp = requests.post(f"{BASE_URL}/projects/{test_id}/portal-link/reset", headers=headers, timeout=10)
+        log_info(f"POST /api/projects/{test_id}/portal-link/reset -> {resp.status_code}")
+        
+        if resp.status_code != 403:
+            log_fail(f"Expected 403 (demo read-only), got {resp.status_code}")
+            return False
+        
+        log_pass("Demo user correctly blocked from resetting portal link (read-only mode)")
+        
+        # Verify the error message mentions demo mode
+        if resp.status_code == 403:
+            error_detail = resp.json().get("detail", "")
+            if "Demo" in error_detail or "demo" in error_detail:
+                log_pass(f"Error message correctly indicates demo mode: '{error_detail}'")
+            else:
+                log_info(f"403 error detail: {error_detail}")
+        
+    except Exception as e:
+        log_fail(f"Exception during regression test: {e}")
+        return False
+    
+    return True
 
-def update_settings(updates):
-    """Update settings in MongoDB"""
-    client = get_mongo_client()
-    db = client[DB_NAME]
-    db.settings.update_one(
-        {"id": "app_settings"},
-        {"$set": updates},
-        upsert=True
-    )
-    client.close()
-
-def register_user(email, password="testpass123"):
-    """Register a new user"""
-    response = httpx.post(
-        f"{BACKEND_URL}/auth/register",
-        json={
-            "email": email,
-            "name": "Test User",
-            "password": password,
-            "phone": ""
-        },
-        timeout=30
-    )
-    return response
-
-def get_orders(token):
-    """Get user orders"""
-    response = httpx.get(
-        f"{BACKEND_URL}/subscription/orders",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=30
-    )
-    return response
-
-def checkout(token, plan):
-    """Create checkout"""
-    response = httpx.post(
-        f"{BACKEND_URL}/subscription/checkout",
-        json={"plan": plan},
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=30
-    )
-    return response
 
 def main():
-    print("=" * 80)
-    print("ProFinance Interior - Promo Expiry + Announcement Theme Backend Tests")
-    print("=" * 80)
-    print()
+    print(f"\n{Colors.BLUE}{'='*80}{Colors.END}")
+    print(f"{Colors.BLUE}ProFinance Interior - Backend API Test Suite{Colors.END}")
+    print(f"{Colors.BLUE}Testing: Demo client portal link survives daily demo reset{Colors.END}")
+    print(f"{Colors.BLUE}Base URL: {BASE_URL}{Colors.END}")
+    print(f"{Colors.BLUE}{'='*80}{Colors.END}")
     
-    # Load snapshot for comparison
-    snapshot_path = ROOT_DIR / "memory" / "settings_backup.json"
-    with open(snapshot_path, 'r') as f:
-        snapshot = json.load(f)
-    
-    print(f"Loaded settings snapshot: {json.dumps(snapshot, indent=2)}")
-    print()
-    
-    # TEST 1: GET /api/settings/public (no auth) - verify new fields
-    print("\n--- TEST 1: GET /api/settings/public (no auth) ---")
     try:
-        response = httpx.get(f"{BACKEND_URL}/settings/public", timeout=30)
-        if response.status_code == 200:
-            data = response.json()
-            required_fields = ["promoEndsAt", "announcementTheme", "serverNow"]
-            legacy_fields = ["announcement", "monthlyPrice", "monthlyPromo", "yearlyPrice", "yearlyPromo", "promoActive"]
-            
-            missing_fields = [f for f in required_fields if f not in data]
-            missing_legacy = [f for f in legacy_fields if f not in data]
-            
-            if not missing_fields and not missing_legacy:
-                # Verify serverNow is a valid ISO timestamp
-                try:
-                    datetime.fromisoformat(data["serverNow"].replace("Z", "+00:00"))
-                    log_test(
-                        "GET /api/settings/public includes all required fields",
-                        True,
-                        f"Status: {response.status_code}, Fields: promoEndsAt={data.get('promoEndsAt')}, announcementTheme={data.get('announcementTheme')}, serverNow={data.get('serverNow')}, announcement={data.get('announcement')}, monthlyPrice={data.get('monthlyPrice')}"
-                    )
-                except Exception as e:
-                    log_test(
-                        "GET /api/settings/public includes all required fields",
-                        False,
-                        f"serverNow is not a valid ISO timestamp: {data.get('serverNow')}, error: {e}"
-                    )
-            else:
-                log_test(
-                    "GET /api/settings/public includes all required fields",
-                    False,
-                    f"Missing fields: {missing_fields + missing_legacy}"
-                )
-        else:
-            log_test(
-                "GET /api/settings/public includes all required fields",
-                False,
-                f"Status: {response.status_code}, Body: {response.text}"
-            )
-    except Exception as e:
-        log_test("GET /api/settings/public includes all required fields", False, f"Exception: {e}")
-    
-    # TEST 2: EXPIRED PROMO - Update settings with past date
-    print("\n--- TEST 2: EXPIRED PROMO (past promoEndsAt) ---")
-    try:
-        # Update settings with expired promo
-        update_settings({
-            "promoActive": True,
-            "monthlyPrice": 350000,
-            "monthlyPromo": 149000,
-            "promoEndsAt": "2020-01-01T00:00:00+00:00"
-        })
-        print("Updated settings: promoActive=True, monthlyPrice=350000, monthlyPromo=149000, promoEndsAt=2020-01-01T00:00:00+00:00")
+        success = test_demo_portal_link_survives_reset()
         
-        # Register a new user
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        test_email = f"test_promo_expired_{timestamp}@test.com"
-        reg_response = register_user(test_email)
-        
-        if reg_response.status_code == 200:
-            token = reg_response.json()["token"]
-            print(f"Registered user: {test_email}")
-            
-            # Checkout monthly plan
-            checkout_response = checkout(token, "monthly")
-            print(f"Checkout response: {checkout_response.status_code}")
-            
-            # Accept both 200 (success) and 502 (Midtrans external error)
-            if checkout_response.status_code in [200, 502]:
-                # Get orders to verify gross_amount
-                orders_response = get_orders(token)
-                if orders_response.status_code == 200:
-                    orders = orders_response.json()
-                    # Find the latest monthly order
-                    monthly_orders = [o for o in orders if o.get("plan") == "monthly"]
-                    if monthly_orders:
-                        latest_order = monthly_orders[0]  # Already sorted by created_at desc
-                        gross_amount = latest_order.get("gross_amount")
-                        
-                        if gross_amount == 350000:
-                            log_test(
-                                "Expired promo uses base price (350000)",
-                                True,
-                                f"Order {latest_order.get('order_id')}: gross_amount={gross_amount} (expected 350000 for expired promo)"
-                            )
-                        else:
-                            log_test(
-                                "Expired promo uses base price (350000)",
-                                False,
-                                f"Order {latest_order.get('order_id')}: gross_amount={gross_amount}, expected 350000"
-                            )
-                    else:
-                        log_test("Expired promo uses base price (350000)", False, "No monthly orders found")
-                else:
-                    log_test("Expired promo uses base price (350000)", False, f"Failed to get orders: {orders_response.status_code}")
-            elif checkout_response.status_code == 500:
-                log_test("Expired promo uses base price (350000)", False, f"Backend returned 500 error: {checkout_response.text}")
-            else:
-                log_test("Expired promo uses base price (350000)", False, f"Checkout failed with status {checkout_response.status_code}: {checkout_response.text}")
+        print(f"\n{Colors.BLUE}{'='*80}{Colors.END}")
+        if success:
+            print(f"{Colors.GREEN}✓✓✓ ALL TESTS PASSED ✓✓✓{Colors.END}")
+            print(f"{Colors.GREEN}Bug fix verified: Demo client portal links survive daily reset{Colors.END}")
+            sys.exit(0)
         else:
-            log_test("Expired promo uses base price (350000)", False, f"Failed to register user: {reg_response.status_code}")
+            print(f"{Colors.RED}✗✗✗ TESTS FAILED ✗✗✗{Colors.END}")
+            print(f"{Colors.RED}Bug NOT fixed: Portal links broken after reset{Colors.END}")
+            sys.exit(1)
     except Exception as e:
-        log_test("Expired promo uses base price (350000)", False, f"Exception: {e}")
-    
-    # TEST 3: LIVE PROMO - Update settings with future date
-    print("\n--- TEST 3: LIVE PROMO (future promoEndsAt) ---")
-    try:
-        # Update settings with live promo
-        update_settings({
-            "promoActive": True,
-            "monthlyPrice": 350000,
-            "monthlyPromo": 149000,
-            "promoEndsAt": "2099-12-31T23:59:59+00:00"
-        })
-        print("Updated settings: promoActive=True, monthlyPrice=350000, monthlyPromo=149000, promoEndsAt=2099-12-31T23:59:59+00:00")
-        
-        # Use the same user from TEST 2
-        if 'token' in locals():
-            # Checkout monthly plan again
-            checkout_response = checkout(token, "monthly")
-            print(f"Checkout response: {checkout_response.status_code}")
-            
-            # Accept both 200 (success) and 502 (Midtrans external error)
-            if checkout_response.status_code in [200, 502]:
-                # Get orders to verify gross_amount
-                orders_response = get_orders(token)
-                if orders_response.status_code == 200:
-                    orders = orders_response.json()
-                    # Find the latest monthly order (should be the second one)
-                    monthly_orders = [o for o in orders if o.get("plan") == "monthly"]
-                    if len(monthly_orders) >= 2:
-                        latest_order = monthly_orders[0]  # First in list (most recent)
-                        gross_amount = latest_order.get("gross_amount")
-                        
-                        if gross_amount == 149000:
-                            log_test(
-                                "Live promo uses promo price (149000)",
-                                True,
-                                f"Order {latest_order.get('order_id')}: gross_amount={gross_amount} (expected 149000 for live promo)"
-                            )
-                        else:
-                            log_test(
-                                "Live promo uses promo price (149000)",
-                                False,
-                                f"Order {latest_order.get('order_id')}: gross_amount={gross_amount}, expected 149000"
-                            )
-                    else:
-                        log_test("Live promo uses promo price (149000)", False, f"Expected 2 monthly orders, found {len(monthly_orders)}")
-                else:
-                    log_test("Live promo uses promo price (149000)", False, f"Failed to get orders: {orders_response.status_code}")
-            elif checkout_response.status_code == 500:
-                log_test("Live promo uses promo price (149000)", False, f"Backend returned 500 error: {checkout_response.text}")
-            else:
-                log_test("Live promo uses promo price (149000)", False, f"Checkout failed with status {checkout_response.status_code}: {checkout_response.text}")
-        else:
-            log_test("Live promo uses promo price (149000)", False, "No token available from TEST 2")
-    except Exception as e:
-        log_test("Live promo uses promo price (149000)", False, f"Exception: {e}")
-    
-    # TEST 4: RESTORE SETTINGS from snapshot
-    print("\n--- TEST 4: RESTORE SETTINGS from snapshot ---")
-    try:
-        # Restore settings from snapshot
-        restored = restore_settings_from_snapshot()
-        print(f"Restored settings from snapshot: {json.dumps(restored, indent=2)}")
-        
-        # Verify restoration by getting public settings
-        response = httpx.get(f"{BACKEND_URL}/settings/public", timeout=30)
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Check that all snapshot fields match
-            mismatches = []
-            for key, value in snapshot.items():
-                if key == "id":
-                    continue  # Skip id field
-                if data.get(key) != value:
-                    mismatches.append(f"{key}: got {data.get(key)}, expected {value}")
-            
-            # Check that promoEndsAt is empty or not present (as in snapshot)
-            if "promoEndsAt" in snapshot:
-                # If snapshot has promoEndsAt, it should match
-                if data.get("promoEndsAt") != snapshot["promoEndsAt"]:
-                    mismatches.append(f"promoEndsAt: got {data.get('promoEndsAt')}, expected {snapshot['promoEndsAt']}")
-            else:
-                # If snapshot doesn't have promoEndsAt, the restored value should be empty or default
-                promo_ends = data.get("promoEndsAt", "")
-                if promo_ends and promo_ends != "":
-                    mismatches.append(f"promoEndsAt: got {promo_ends}, expected empty/absent (snapshot has no promoEndsAt)")
-            
-            if not mismatches:
-                log_test(
-                    "Settings restored from snapshot",
-                    True,
-                    f"All fields match snapshot. announcement={data.get('announcement')}, monthlyPrice={data.get('monthlyPrice')}, monthlyPromo={data.get('monthlyPromo')}, yearlyPrice={data.get('yearlyPrice')}, yearlyPromo={data.get('yearlyPromo')}, promoActive={data.get('promoActive')}, promoEndsAt={data.get('promoEndsAt')}"
-                )
-            else:
-                log_test(
-                    "Settings restored from snapshot",
-                    False,
-                    f"Mismatches: {', '.join(mismatches)}"
-                )
-        else:
-            log_test("Settings restored from snapshot", False, f"Failed to get public settings: {response.status_code}")
-    except Exception as e:
-        log_test("Settings restored from snapshot", False, f"Exception: {e}")
-    
-    # Print summary
-    print("\n" + "=" * 80)
-    print("TEST SUMMARY")
-    print("=" * 80)
-    
-    passed = sum(1 for r in test_results if r["passed"])
-    total = len(test_results)
-    
-    for result in test_results:
-        status = "✅ PASS" if result["passed"] else "❌ FAIL"
-        print(f"{status}: {result['test']}")
-        if result["details"]:
-            print(f"  {result['details']}")
-    
-    print()
-    print(f"Total: {passed}/{total} tests passed")
-    
-    if passed == total:
-        print("\n🎉 ALL TESTS PASSED!")
-        return 0
-    else:
-        print(f"\n⚠️  {total - passed} test(s) failed")
-        return 1
+        print(f"\n{Colors.RED}FATAL ERROR: {e}{Colors.END}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

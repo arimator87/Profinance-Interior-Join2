@@ -372,7 +372,9 @@ async def _reset_demo_job():
     if not user:
         return
     uid = user["user_id"]
-    projects = await db.projects.find({"user_id": uid}, {"_id": 0, "id": 1}).to_list(1000)
+    projects = await db.projects.find({"user_id": uid}, {"_id": 0, "id": 1, "name": 1, "portalSlug": 1}).to_list(1000)
+    # Preserve existing portal slugs so client portal links already shared keep working after reset
+    slug_by_name = {p["name"]: p["portalSlug"] for p in projects if p.get("portalSlug")}
     pids = [p["id"] for p in projects]
     witems = await db.work_items.find({"project_id": {"$in": pids}}, {"_id": 0, "id": 1}).to_list(3000)
     wiids = [w["id"] for w in witems]
@@ -383,7 +385,13 @@ async def _reset_demo_job():
     await db.workers.delete_many({"project_id": {"$in": pids}})
     await db.projects.delete_many({"user_id": uid})
     await _provision_demo_data(uid)
-    logger.info("Demo data reset & re-seeded for %s", uid)
+    # Re-apply preserved slugs onto the freshly seeded projects (matched by name)
+    new_projects = await db.projects.find({"user_id": uid}, {"_id": 0, "id": 1, "name": 1, "portalSlug": 1}).to_list(1000)
+    for np in new_projects:
+        slug = slug_by_name.get(np["name"]) or f"{slugify(np['name'])}-demo"
+        if np.get("portalSlug") != slug:
+            await db.projects.update_one({"id": np["id"]}, {"$set": {"portalSlug": slug}})
+    logger.info("Demo data reset & re-seeded for %s (portal slugs preserved: %d)", uid, len(slug_by_name))
 
 
 @api.post("/cron/reset-demo")
@@ -1980,6 +1988,8 @@ async def seed_demo(user: dict = Depends(get_current_user)):
             "nominal": spec["nominal"], "companyName": spec["companyName"], "alamatProyek": spec["alamatProyek"],
             "tanggalMulai": d(spec["start"]), "targetSelesai": d(spec["end"]), "category": spec["category"],
             "status": "Berjalan", "thumbnail": thumbs[spec["thumb"]], "createdAt": d(spec["start"]),
+            # Stable portal slug so client links survive the daily demo reset
+            "portalSlug": f"{slugify(spec['name'])}-demo",
         })
         for typ, amt, cat, desc, days in spec["tx"]:
             await db.transactions.insert_one({
