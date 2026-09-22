@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api, fileUrl } from "@/lib/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -6,8 +6,9 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
+import { Loader2, Upload, Image as ImageIcon, X } from "lucide-react";
 import { toast } from "sonner";
+import { defaultCatImage } from "@/lib/catimage";
 
 const DEFAULT_CATS = [
   { id: "d1", name: "Residensial", imageUrl: null },
@@ -15,20 +16,16 @@ const DEFAULT_CATS = [
   { id: "d3", name: "Kantor", imageUrl: null },
 ];
 
-const THUMBS = [
-  "https://images.unsplash.com/photo-1633110187937-6e3b2f36dfca?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBsdXh1cnklMjBpbnRlcmlvciUyMGFyY2hpdGVjdHVyZSUyMGxpdmluZyUyMHJvb20lMjBraXRjaGVuJTIwb2ZmaWNlfGVufDB8fHx8MTc8OTgwMjMxN3ww&ixlib=rb-4.1.0&q=85",
-  "https://images.pexels.com/photos/8089172/pexels-photo-8089172.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
-  "https://images.unsplash.com/photo-1768321917661-d4f1a89d2185?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2MzR8MHwxfHNlYXJjaHwzfHxpbnRlcmlvciUyMGRlc2lnbiUyMGFyY2hpdGVjdHVyZSUyMGNvbnN0cnVjdGlvbiUyMHNpdGUlMjBmaW5pc2glMjByb29tfGVufDB8fHx8MTc4OTgwMjMxMHww&ixlib=rb-4.1.0&q=85",
-];
-
 export function AddProjectDialog({ open, onOpenChange, onCreated, project = null }) {
   const isEdit = !!project;
   const [form, setForm] = useState({
     name: "", owner: "", nominal: "", companyName: "", alamatProyek: "",
-    tanggalMulai: "", targetSelesai: "", category: "Residensial",
+    tanggalMulai: "", targetSelesai: "", category: "Residensial", thumbnail: null,
   });
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [categories, setCategories] = useState(DEFAULT_CATS);
+  const fileRef = useRef(null);
   const set = (k) => (e) => setForm({ ...form, [k]: e?.target ? e.target.value : e });
 
   useEffect(() => {
@@ -47,12 +44,31 @@ export function AddProjectDialog({ open, onOpenChange, onCreated, project = null
         companyName: project.companyName || "", alamatProyek: project.alamatProyek || "",
         tanggalMulai: project.tanggalMulai ? project.tanggalMulai.slice(0, 10) : "",
         targetSelesai: project.targetSelesai ? project.targetSelesai.slice(0, 10) : "",
-        category: project.category || "Residensial",
+        category: project.category || "Residensial", thumbnail: project.thumbnail || null,
       });
     } else {
-      setForm({ name: "", owner: "", nominal: "", companyName: "", alamatProyek: "", tanggalMulai: "", targetSelesai: "", category: "Residensial" });
+      setForm({ name: "", owner: "", nominal: "", companyName: "", alamatProyek: "", tanggalMulai: "", targetSelesai: "", category: "Residensial", thumbnail: null });
     }
   }, [open, project]);
+
+  const pickPhoto = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { toast.error("File harus berupa gambar (JPG/PNG/WebP)"); return; }
+    if (file.size > 2 * 1024 * 1024) { toast.error("Ukuran gambar maksimal 2 MB"); return; }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/upload", fd);
+      setForm((f) => ({ ...f, thumbnail: data.path }));
+      toast.success("Foto proyek terunggah");
+    } catch {
+      toast.error("Gagal mengunggah foto");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
 
   const submit = async () => {
     if (!form.name) return toast.error("Nama proyek wajib diisi");
@@ -60,17 +76,17 @@ export function AddProjectDialog({ open, onOpenChange, onCreated, project = null
     try {
       const payload = {
         ...form,
+        thumbnail: form.thumbnail || null,
         nominal: parseInt(form.nominal || 0, 10),
         tanggalMulai: form.tanggalMulai ? new Date(form.tanggalMulai).toISOString() : null,
         targetSelesai: form.targetSelesai ? new Date(form.targetSelesai).toISOString() : null,
       };
       let res;
       if (isEdit) {
-        res = await api.put(`/projects/${project.id}`, { ...payload, thumbnail: project.thumbnail, status: project.status || "Berjalan" });
+        res = await api.put(`/projects/${project.id}`, { ...payload, status: project.status || "Berjalan" });
         toast.success("Proyek berhasil diperbarui");
       } else {
-        const thumb = THUMBS[Math.floor(Math.random() * THUMBS.length)];
-        res = await api.post("/projects", { ...payload, thumbnail: thumb });
+        res = await api.post("/projects", payload);
         toast.success("Proyek berhasil dibuat");
       }
       onCreated?.(res.data);
@@ -124,6 +140,44 @@ export function AddProjectDialog({ open, onOpenChange, onCreated, project = null
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div>
+            <Label>Foto Proyek</Label>
+            <div className="mt-1 flex items-center gap-3">
+              <div className="w-24 h-16 rounded-lg overflow-hidden bg-slate-100 border border-slate-200 shrink-0">
+                <img
+                  src={form.thumbnail ? fileUrl(form.thumbnail) : defaultCatImage(form.category)}
+                  alt="Foto proyek"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="flex-1 min-w-0">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  data-testid="project-photo-input"
+                  onChange={(e) => pickPhoto(e.target.files?.[0])}
+                />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button type="button" variant="outline" size="sm" data-testid="project-photo-upload-btn"
+                    onClick={() => fileRef.current?.click()} disabled={uploading} className="gap-1.5">
+                    {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : (form.thumbnail ? <ImageIcon className="w-4 h-4" /> : <Upload className="w-4 h-4" />)}
+                    {form.thumbnail ? "Ganti Foto" : "Unggah Foto"}
+                  </Button>
+                  {form.thumbnail && (
+                    <Button type="button" variant="ghost" size="sm" data-testid="project-photo-remove-btn"
+                      onClick={() => setForm((f) => ({ ...f, thumbnail: null }))} className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50">
+                      <X className="w-4 h-4" /> Hapus
+                    </Button>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  {form.thumbnail ? "Foto khusus proyek ini." : "Kosong = memakai foto kategori otomatis."} Maks 2 MB.
+                </p>
+              </div>
+            </div>
           </div>
           <div>
             <Label>Alamat Proyek</Label>

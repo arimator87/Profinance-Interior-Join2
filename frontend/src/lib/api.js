@@ -30,7 +30,7 @@ api.interceptors.response.use(
 
 export function fileUrl(path) {
   if (!path) return null;
-  if (/^https?:\/\//i.test(path)) return path;
+  if (/^(https?:|data:)/i.test(path)) return path;
   const token = localStorage.getItem("pf_token");
   return `${API}/files/${path}?auth=${encodeURIComponent(token || "")}`;
 }

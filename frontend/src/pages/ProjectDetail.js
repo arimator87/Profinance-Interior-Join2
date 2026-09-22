@@ -18,9 +18,10 @@ import { ProgressTab } from "@/components/tabs/ProgressTab";
 import { ReportTab } from "@/components/tabs/ReportTab";
 import {
   ArrowLeft, Loader2, Wallet, TrendingUp, Receipt, Building2, Trash2, Lock,
-  Wallet2, ListChecks, FileBarChart, Crown, MapPin, Calendar, Pencil, Briefcase, Download, Layers,
+  Wallet2, ListChecks, FileBarChart, Crown, MapPin, Calendar, Pencil, Briefcase, Download,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
+import { defaultCatImage } from "@/lib/catimage";
 import { toast } from "sonner";
 
 function Stat({ label, value, color, sub }) {
@@ -110,6 +111,8 @@ export default function ProjectDetail() {
 
   const catObj = categories.find((x) => (x.name || "").toLowerCase() === (project.category || "").toLowerCase());
   const catImg = catObj?.imageUrl ? fileUrl(catObj.imageUrl) : null;
+  const chipImg = catImg || defaultCatImage(project.category);
+  const headerImg = project.thumbnail ? fileUrl(project.thumbnail) : (catImg || defaultCatImage(project.category));
 
   const TabTrigger = ({ value, icon: Icon, label, premium, testid }) => (
     <TabsTrigger value={value} data-testid={testid} className="gap-1.5 data-[state=active]:bg-white data-[state=active]:text-amber-700 data-[state=active]:shadow-sm relative">
@@ -128,7 +131,7 @@ export default function ProjectDetail() {
 
         <Card className="overflow-hidden border-slate-200 bg-white mb-5">
           <div className="h-36 sm:h-44 relative bg-slate-100">
-            {project.thumbnail || catImg ? <img src={project.thumbnail || catImg} alt={project.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Building2 className="w-12 h-12 text-slate-300" /></div>}
+            {headerImg ? <img src={headerImg} alt={project.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Building2 className="w-12 h-12 text-slate-300" /></div>}
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
             <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5 flex items-end justify-between gap-3">
               <div className="min-w-0">
@@ -138,9 +141,7 @@ export default function ProjectDetail() {
                   <span className="flex items-center gap-1"><Building2 className="w-3 h-3" /> {project.owner || "-"}</span>
                   {project.category && (
                     <span data-testid="project-category-chip" className="flex items-center gap-1">
-                      {catImg
-                        ? <img src={catImg} alt={project.category} className="w-4 h-4 rounded object-cover" />
-                        : <Layers className="w-3 h-3" />}
+                      <img src={chipImg} alt={project.category} className="w-4 h-4 rounded object-cover" />
                       {project.category}
                     </span>
                   )}

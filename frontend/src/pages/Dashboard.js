@@ -5,11 +5,12 @@ import { useAuth } from "@/context/AuthContext";
 import { Header } from "@/components/Header";
 import { HealthBadge } from "@/components/HealthBadge";
 import { AddProjectDialog } from "@/components/AddProjectDialog";
+import { defaultCatImage } from "@/lib/catimage";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { motion } from "framer-motion";
 import {
-  Plus, Wallet, TrendingUp, Receipt, HardHat, ArrowUpRight, Loader2, Building2, Sparkles, FolderPlus, Layers,
+  Plus, Wallet, TrendingUp, Receipt, HardHat, ArrowUpRight, Loader2, Sparkles, FolderPlus, Layers,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -157,17 +158,15 @@ export default function Dashboard() {
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {filtered.map((p, i) => {
-              const cImg = catImage(p.category);
+              const catImg = catImage(p.category);
+              const chipImg = catImg || defaultCatImage(p.category);
+              const headerImg = p.thumbnail ? fileUrl(p.thumbnail) : (catImg || defaultCatImage(p.category));
               return (
               <motion.div key={p.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
                 <Card data-testid={`project-card-${p.id}`} onClick={() => navigate(p.status === "Prospek" ? `/rab/${p.id}` : `/project/${p.id}`)}
                   className="overflow-hidden border-slate-200 bg-white hover:shadow-lg hover:-translate-y-0.5 transition-all cursor-pointer group">
                   <div className="h-32 relative overflow-hidden bg-slate-100">
-                    {p.thumbnail || cImg ? (
-                      <img src={p.thumbnail || cImg} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center"><Building2 className="w-10 h-10 text-slate-300" /></div>
-                    )}
+                    <img src={headerImg} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                     <div className="absolute top-3 left-3"><HealthBadge marginPct={p.summary.marginPct} size="sm" /></div>
                     {p.status === "Prospek" && (
                       <div className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wide shadow flex items-center gap-1">
@@ -184,9 +183,7 @@ export default function Dashboard() {
                           {p.category && (
                             <span className="flex items-center gap-1.5 min-w-0 shrink-0 max-w-[55%]">
                               <span>·</span>
-                              {cImg && (
-                                <img src={cImg} alt={p.category} data-testid={`project-card-cat-img-${p.id}`} className="w-4 h-4 rounded object-cover shrink-0" />
-                              )}
+                              <img src={chipImg} alt={p.category} data-testid={`project-card-cat-img-${p.id}`} className="w-4 h-4 rounded object-cover shrink-0" />
                               <span className="truncate">{p.category}</span>
                             </span>
                           )}

@@ -7,13 +7,18 @@ export function rupiah(n) {
   return `${neg ? "-" : ""}Rp ${abs}`;
 }
 
+// Format a number with 2 decimals using Indonesian comma as the decimal separator
+function withComma(num, digits = 2) {
+  return num.toFixed(digits).replace(".", ",");
+}
+
 export function rupiahShort(n) {
   const val = Number(n) || 0;
   const abs = Math.abs(val);
   const sign = val < 0 ? "-" : "";
-  if (abs >= 1_000_000_000) return `${sign}Rp ${(abs / 1_000_000_000).toFixed(1)} M`;
-  if (abs >= 1_000_000) return `${sign}Rp ${(abs / 1_000_000).toFixed(0)} jt`;
-  if (abs >= 1_000) return `${sign}Rp ${(abs / 1_000).toFixed(0)} rb`;
+  if (abs >= 1_000_000_000) return `${sign}Rp ${withComma(abs / 1_000_000_000)} M`;
+  if (abs >= 1_000_000) return `${sign}Rp ${withComma(abs / 1_000_000)} jt`;
+  if (abs >= 1_000) return `${sign}Rp ${withComma(abs / 1_000)} rb`;
   return rupiah(val);
 }
 
