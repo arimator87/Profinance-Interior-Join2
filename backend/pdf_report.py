@@ -1002,6 +1002,8 @@ def build_invoice_pdf(invoice, computed):
     meta_lines = []
     if invoice.get("number"):
         meta_lines.append(f"No : {invoice['number']}")
+    if invoice.get("quotationNo"):
+        meta_lines.append(f"Ref. Quotation : {invoice['quotationNo']}")
     meta_lines.append("Tanggal : " + _fmt(invoice.get("invoiceDate")))
     if invoice.get("dueDate"):
         meta_lines.append("Jatuh Tempo : " + _fmt(invoice.get("dueDate")))
@@ -1041,6 +1043,14 @@ def build_invoice_pdf(invoice, computed):
     cltbl.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 0.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
     story.append(cltbl)
     story.append(Spacer(1, 8))
+
+    # ---- Payment reference (quotation) so the client knows what they are paying for
+    if invoice.get("quotationNo"):
+        ref_txt = f"Berdasarkan Quotation No: <b>{invoice['quotationNo']}</b>"
+        if invoice.get("projectName"):
+            ref_txt += f" — Proyek {invoice['projectName']}"
+        story.append(Paragraph("<i>" + ref_txt + "</i>", st_small))
+        story.append(Spacer(1, 6))
 
     # ---- Items table
     cw = [content_w * 0.06, content_w * 0.52, content_w * 0.10, content_w * 0.16, content_w * 0.16]

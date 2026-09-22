@@ -324,6 +324,7 @@ class InvoiceItemIn(BaseModel):
 class InvoiceIn(BaseModel):
     type: str = "proforma"  # proforma | final | retention
     number: str = ""
+    quotationNo: str = ""
     invoiceDate: Optional[str] = None
     dueDate: Optional[str] = None
     status: str = "Draft"  # Draft | Terkirim | Lunas
@@ -1829,11 +1830,48 @@ async def invoice_context(project_id: str, user: dict = Depends(require_premium)
             "companyName", "companyAddress", "companyPhone", "bankName", "bankAccount",
             "bankHolder", "signerLeft", "signerRight", "signatureImage")},
         "ppn": {"ppnEnabled": comp.get("ppnEnabled", False), "ppnPercent": comp.get("ppnPercent", 11)},
+        "rabRef": {"quotationNo": rab.get("quotationNo", ""), "quotationDate": rab.get("quotationDate")},
         "termins": termins,
         "summary": {**summary, "paid": paid},
         "suggestion": {"type": suggested_type, "description": suggested_desc, "amount": suggested_amount},
         "existingCount": len(existing),
     }
+
+@api.get("/projects/{project_id}/billing-recap")
+async def billing_recap(project_id: str, user: dict = Depends(require_premium)):
+    """Billing recap: total billed (invoices sent/paid) vs collected vs retention held."""
+    p = await get_owned_project(project_id, user)
+    summary = await compute_summary(p)
+    invoices = await db.invoices.find(
+        {"project_id": project_id, "user_id": user["user_id"]}, {"_id": 0}
+    ).to_list(500)
+    total_billed = 0       # invoices with status Terkirim/Lunas (actually billed to client)
+    draft_amount = 0
+    retention_held = 0
+    billed_count = 0
+    for inv in invoices:
+        comp = compute_invoice(inv)
+        retention_held += comp.get("retentionAmount", 0)
+        if inv.get("status") in ("Terkirim", "Lunas"):
+            total_billed += comp.get("amountDue", 0)
+            billed_count += 1
+        else:
+            draft_amount += comp.get("amountDue", 0)
+    paid = summary.get("terbayar", 0)
+    receivable = max(0, total_billed - paid)
+    return {
+        "nominal": summary.get("nominal", 0),
+        "totalBilled": total_billed,
+        "draftAmount": draft_amount,
+        "paid": paid,
+        "receivable": receivable,
+        "retentionHeld": retention_held,
+        "sisaTagihan": summary.get("sisaTagihan", 0),
+        "invoiceCount": len(invoices),
+        "billedCount": billed_count,
+    }
+
+
 
 
 def _invoice_public(inv: dict) -> dict:

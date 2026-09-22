@@ -18,6 +18,7 @@ import { TukangTab } from "@/components/tabs/TukangTab";
 import { ProgressTab } from "@/components/tabs/ProgressTab";
 import { ReportTab } from "@/components/tabs/ReportTab";
 import { InvoiceTab } from "@/components/tabs/InvoiceTab";
+import { BillingRecap } from "@/components/BillingRecap";
 import {
   ArrowLeft, Loader2, Wallet, TrendingUp, Receipt, Building2, Trash2, Lock,
   Wallet2, ListChecks, FileBarChart, Crown, MapPin, Calendar, Pencil, Briefcase, Download,

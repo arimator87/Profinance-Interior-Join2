@@ -30,6 +30,7 @@ export function InvoiceDialog({ open, onOpenChange, project, invoice = null, onS
   const buildFromInvoice = (inv) => ({
     type: inv.type || "proforma",
     number: inv.number || "",
+    quotationNo: inv.quotationNo || "",
     invoiceDate: inv.invoiceDate ? inv.invoiceDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
     dueDate: inv.dueDate ? inv.dueDate.slice(0, 10) : "",
     status: inv.status || "Draft",
@@ -57,6 +58,7 @@ export function InvoiceDialog({ open, onOpenChange, project, invoice = null, onS
       setForm({
         type: sug.type || "proforma",
         number: "",
+        quotationNo: data.rabRef?.quotationNo || "",
         invoiceDate: new Date().toISOString().slice(0, 10),
         dueDate: "",
         status: "Draft",
@@ -175,6 +177,13 @@ export function InvoiceDialog({ open, onOpenChange, project, invoice = null, onS
                 <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>{typeHint}</span>
               </div>
             )}
+
+            <div>
+              <Label>No. Quotation (Ref)</Label>
+              <Input data-testid="invoice-quotation-input" value={form.quotationNo} onChange={(e) => set("quotationNo", e.target.value)}
+                placeholder="15/FT-QUOT/IX/26" className="mt-1" />
+              <p className="text-[11px] text-slate-400 mt-1">Otomatis dari RAB proyek bila ada — jadi keterangan pembayaran untuk klien.</p>
+            </div>
 
             <div className="grid sm:grid-cols-3 gap-3">
               <div>

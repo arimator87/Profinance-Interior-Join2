@@ -58,8 +58,9 @@ export function InvoiceTab({ project, createSignal = 0 }) {
     const c = inv.computed || {};
     const typeLabel = TYPE_META[inv.type]?.label || "Invoice";
     const msg =
-      `Halo${inv.clientName ? " " + inv.clientName : ""}, berikut ${typeLabel} No. *${inv.number}* untuk proyek *${project.name}*.\n\n` +
-      `Jumlah: ${rupiah(c.amountDue ?? 0)}\n` +
+      `Halo${inv.clientName ? " " + inv.clientName : ""}, berikut ${typeLabel} No. *${inv.number}* untuk proyek *${project.name}*.\n` +
+      (inv.quotationNo ? `Ref. Quotation: ${inv.quotationNo}\n` : "") +
+      `\nJumlah: ${rupiah(c.amountDue ?? 0)}\n` +
       (inv.dueDate ? `Jatuh tempo: ${fmtDate(inv.dueDate)}\n` : "") +
       `\nMohon konfirmasi setelah pembayaran. Terima kasih.`;
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
@@ -68,7 +69,7 @@ export function InvoiceTab({ project, createSignal = 0 }) {
   const changeStatus = async (inv, status) => {
     try {
       await api.put(`/invoices/${inv.id}`, {
-        type: inv.type, number: inv.number, invoiceDate: inv.invoiceDate, dueDate: inv.dueDate,
+        type: inv.type, number: inv.number, quotationNo: inv.quotationNo || "", invoiceDate: inv.invoiceDate, dueDate: inv.dueDate,
         status, clientName: inv.clientName, clientAddress: inv.clientAddress, clientPhone: inv.clientPhone,
         items: inv.items, ppnEnabled: inv.ppnEnabled, ppnPercent: inv.ppnPercent,
         retentionEnabled: inv.retentionEnabled, retentionPercent: inv.retentionPercent,
