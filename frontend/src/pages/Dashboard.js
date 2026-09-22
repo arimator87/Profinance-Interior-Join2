@@ -9,12 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { motion } from "framer-motion";
 import {
-  Plus, Wallet, TrendingUp, Receipt, HardHat, ArrowUpRight, Loader2, Building2, Sparkles, FolderPlus,
+  Plus, Wallet, TrendingUp, Receipt, HardHat, ArrowUpRight, Loader2, Building2, Sparkles, FolderPlus, Layers,
 } from "lucide-react";
 import { rupiah, rupiahShort, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
 
-const FILTERS = ["Semua", "Berjalan", "Selesai", "Pending"];
+const FILTERS = ["Semua", "Berjalan", "Selesai", "Prospek"];
 
 function Kpi({ icon: Icon, label, value, accent, testid, sub }) {
   return (
@@ -89,9 +89,14 @@ export default function Dashboard() {
             </h1>
             <p className="text-slate-500 mt-1">Ringkasan finansial seluruh proyek Anda.</p>
           </div>
-          <Button data-testid="btn-add-project" onClick={() => setAddOpen(true)} className="bg-amber-600 hover:bg-amber-700 text-white gap-2 self-start">
-            <Plus className="w-4 h-4" /> Proyek Baru
-          </Button>
+          <div className="flex items-center gap-2 self-start">
+            <Button data-testid="btn-create-rab" onClick={() => navigate("/rab/new")} variant="outline" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50">
+              <Layers className="w-4 h-4" /> Buat RAB
+            </Button>
+            <Button data-testid="btn-add-project" onClick={() => setAddOpen(true)} className="bg-amber-600 hover:bg-amber-700 text-white gap-2">
+              <Plus className="w-4 h-4" /> Proyek Baru
+            </Button>
+          </div>
         </div>
 
         {!isPremium && (
@@ -141,7 +146,7 @@ export default function Dashboard() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {filtered.map((p, i) => (
               <motion.div key={p.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-                <Card data-testid={`project-card-${p.id}`} onClick={() => navigate(`/project/${p.id}`)}
+                <Card data-testid={`project-card-${p.id}`} onClick={() => navigate(p.status === "Prospek" ? `/rab/${p.id}` : `/project/${p.id}`)}
                   className="overflow-hidden border-slate-200 bg-white hover:shadow-lg hover:-translate-y-0.5 transition-all cursor-pointer group">
                   <div className="h-32 relative overflow-hidden bg-slate-100">
                     {p.thumbnail ? (
@@ -150,6 +155,11 @@ export default function Dashboard() {
                       <div className="w-full h-full flex items-center justify-center"><Building2 className="w-10 h-10 text-slate-300" /></div>
                     )}
                     <div className="absolute top-3 left-3"><HealthBadge marginPct={p.summary.marginPct} size="sm" /></div>
+                    {p.status === "Prospek" && (
+                      <div className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wide shadow flex items-center gap-1">
+                        <Layers className="w-3 h-3" /> Prospek
+                      </div>
+                    )}
                   </div>
                   <div className="p-4">
                     <div className="flex items-start justify-between gap-2">

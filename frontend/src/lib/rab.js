@@ -1,0 +1,79 @@
+// Mirror of backend compute_rab so the builder shows live totals.
+// subItem.nilai = round(qty * hargaSatuan) + sum(material.nilai)
+
+export function uid() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+export function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function computeRab(rab) {
+  const r = rab || {};
+  let totalItems = 0;
+  let idx = 0;
+  const sections = (r.sections || []).map((sec) => {
+    let subtotal = 0;
+    const subItems = (sec.subItems || []).map((si) => {
+      idx += 1;
+      const qty = num(si.qty);
+      const harga = Math.round(num(si.hargaSatuan));
+      const base = Math.round(qty * harga);
+      const mats = si.materials || [];
+      const materialTotal = mats.reduce((a, m) => a + Math.round(num(m.nilai)), 0);
+      const nilai = base + materialTotal;
+      subtotal += nilai;
+      return { ...si, no: idx, qty, hargaSatuan: harga, base, materialTotal, nilai };
+    });
+    totalItems += subtotal;
+    return { ...sec, subItems, subtotal };
+  });
+  const discount = Math.round(num(r.discount));
+  const afterDiscount = totalItems - discount;
+  const ppnEnabled = !!r.ppnEnabled;
+  const ppnPercent = num(r.ppnPercent);
+  const ppnAmount = ppnEnabled ? Math.round((afterDiscount * ppnPercent) / 100) : 0;
+  const grandTotal = afterDiscount + ppnAmount;
+  const termins = (r.termins || []).map((t) => ({
+    ...t,
+    percent: num(t.percent),
+    nominal: Math.round((grandTotal * num(t.percent)) / 100),
+  }));
+  return { sections, totalItems, discount, afterDiscount, ppnEnabled, ppnPercent, ppnAmount, grandTotal, termins };
+}
+
+export function emptyRab() {
+  return {
+    clientName: "",
+    clientAddress: "",
+    clientPhone: "",
+    quotationNo: "",
+    quotationDate: new Date().toISOString().slice(0, 10),
+    companyName: "",
+    companyAddress: "",
+    companyPhone: "",
+    bankName: "",
+    bankAccount: "",
+    bankHolder: "",
+    signerLeft: "",
+    signerRight: "",
+    notes: "",
+    discount: 0,
+    ppnEnabled: false,
+    ppnPercent: 11,
+    sections: [
+      {
+        id: uid(),
+        name: "PEKERJAAN PERSIAPAN",
+        subItems: [{ id: uid(), name: "", qty: 1, unit: "Ls", hargaSatuan: 0, materials: [] }],
+      },
+    ],
+    termins: [
+      { label: "Down Payment (DP)", percent: 50 },
+      { label: "Termin Progress", percent: 30 },
+      { label: "Pelunasan", percent: 20 },
+    ],
+  };
+}

@@ -12,6 +12,7 @@ import Account from "@/pages/Account";
 import AdminSettings from "@/pages/AdminSettings";
 import AdminUsers from "@/pages/AdminUsers";
 import ClientPortal from "@/pages/ClientPortal";
+import RabBuilder from "@/pages/RabBuilder";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -38,6 +39,8 @@ function AppRoutes() {
       <Route path="/portal/:slug" element={<ClientPortal />} />
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/project/:id" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>} />
+      <Route path="/rab/new" element={<ProtectedRoute><RabBuilder /></ProtectedRoute>} />
+      <Route path="/rab/:projectId" element={<ProtectedRoute><RabBuilder /></ProtectedRoute>} />
       <Route path="/pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
       <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
       <Route path="/admin/settings" element={<ProtectedRoute><AdminSettings /></ProtectedRoute>} />

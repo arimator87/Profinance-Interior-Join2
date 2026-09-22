@@ -669,3 +669,225 @@ def build_progress_pdf(project, summary, prog, transactions, entries_by_key):
     doc.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
     buf.seek(0)
     return buf.read()
+
+
+
+def _terbilang(n):
+    n = int(round(abs(n or 0)))
+    satuan = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan",
+              "sepuluh", "sebelas"]
+
+    def _t(x):
+        if x < 12:
+            return satuan[x]
+        if x < 20:
+            return _t(x - 10) + " belas"
+        if x < 100:
+            return _t(x // 10) + " puluh" + ((" " + _t(x % 10)) if x % 10 else "")
+        if x < 200:
+            return "seratus" + ((" " + _t(x - 100)) if x - 100 else "")
+        if x < 1000:
+            return _t(x // 100) + " ratus" + ((" " + _t(x % 100)) if x % 100 else "")
+        if x < 2000:
+            return "seribu" + ((" " + _t(x - 1000)) if x - 1000 else "")
+        if x < 1000000:
+            return _t(x // 1000) + " ribu" + ((" " + _t(x % 1000)) if x % 1000 else "")
+        if x < 1000000000:
+            return _t(x // 1000000) + " juta" + ((" " + _t(x % 1000000)) if x % 1000000 else "")
+        if x < 1000000000000:
+            return _t(x // 1000000000) + " miliar" + ((" " + _t(x % 1000000000)) if x % 1000000000 else "")
+        return _t(x // 1000000000000) + " triliun" + ((" " + _t(x % 1000000000000)) if x % 1000000000000 else "")
+
+    if n == 0:
+        return "Nol Rupiah"
+    words = " ".join(_t(n).split())
+    return words.strip().capitalize() + " Rupiah"
+
+
+def build_rab_pdf(project, rab, computed):
+    """Surat Penawaran (RAB) — sections, sub-items, materials, totals, termins, bank & signatures."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4, leftMargin=14 * mm, rightMargin=14 * mm,
+        topMargin=14 * mm, bottomMargin=14 * mm,
+    )
+    content_w = doc.width
+    AMBER = colors.HexColor("#d97706")
+    DARK = colors.HexColor("#0f172a")
+    GREYTX = colors.HexColor("#475569")
+    LINE = colors.HexColor("#e2e8f0")
+    SECBG = colors.HexColor("#fef3c7")
+
+    st_company = ParagraphStyle("co", fontName="Helvetica-Bold", fontSize=15, textColor=DARK, leading=17)
+    st_small = ParagraphStyle("sm", fontName="Helvetica", fontSize=8, textColor=GREYTX, leading=11)
+    st_title = ParagraphStyle("ti", fontName="Helvetica-Bold", fontSize=17, textColor=AMBER, leading=19, alignment=TA_RIGHT)
+    st_meta = ParagraphStyle("me", fontName="Helvetica", fontSize=8.5, textColor=DARK, leading=12, alignment=TA_RIGHT)
+    st_cell = ParagraphStyle("ce", fontName="Helvetica", fontSize=8.5, textColor=DARK, leading=11)
+    st_cellb = ParagraphStyle("ceb", fontName="Helvetica-Bold", fontSize=8.5, textColor=DARK, leading=11)
+    st_mat = ParagraphStyle("mt", fontName="Helvetica-Oblique", fontSize=7.8, textColor=GREYTX, leading=10, leftIndent=8)
+    st_secname = ParagraphStyle("sn", fontName="Helvetica-Bold", fontSize=9, textColor=DARK, leading=11)
+    st_num = ParagraphStyle("nu", fontName="Helvetica", fontSize=8.5, textColor=DARK, leading=11, alignment=TA_RIGHT)
+    st_numb = ParagraphStyle("nub", fontName="Helvetica-Bold", fontSize=8.5, textColor=DARK, leading=11, alignment=TA_RIGHT)
+
+    story = []
+    # ---- Header: company (left) + title/meta (right)
+    company = rab.get("companyName") or "Perusahaan Anda"
+    co_info = "<br/>".join([x for x in [rab.get("companyAddress", ""), ("Telp: " + rab["companyPhone"]) if rab.get("companyPhone") else ""] if x])
+    left = [Paragraph(company, st_company)]
+    if co_info:
+        left.append(Paragraph(co_info, st_small))
+    meta_lines = []
+    if rab.get("quotationNo"):
+        meta_lines.append(f"No : {rab['quotationNo']}")
+    meta_lines.append("Tanggal : " + _fmt(rab.get("quotationDate")))
+    right = [Paragraph("SURAT PENAWARAN", st_title), Spacer(1, 3), Paragraph("<br/>".join(meta_lines), st_meta)]
+    head = Table([[left, right]], colWidths=[content_w * 0.58, content_w * 0.42])
+    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(head)
+    story.append(Spacer(1, 6))
+    story.append(Table([[""]], colWidths=[content_w], style=TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1.4, AMBER)])))
+    story.append(Spacer(1, 8))
+
+    # ---- Client block
+    cl = [
+        [Paragraph("<b>Kepada Yth,</b>", st_cell)],
+        [Paragraph(rab.get("clientName") or "-", st_cellb)],
+    ]
+    if rab.get("clientAddress"):
+        cl.append([Paragraph(rab["clientAddress"], st_cell)])
+    if rab.get("clientPhone"):
+        cl.append([Paragraph("Telp: " + rab["clientPhone"], st_cell)])
+    cltbl = Table(cl, colWidths=[content_w])
+    cltbl.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 0.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    story.append(cltbl)
+    story.append(Spacer(1, 8))
+
+    # ---- Main items table
+    cw = [content_w * 0.05, content_w * 0.47, content_w * 0.08, content_w * 0.08, content_w * 0.16, content_w * 0.16]
+    rows = [[Paragraph("NO", st_cellb), Paragraph("KETERANGAN", st_cellb), Paragraph("QTY", st_numb),
+             Paragraph("SAT", st_cellb), Paragraph("HARGA", st_numb), Paragraph("TOTAL", st_numb)]]
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), DARK),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8.5),
+        ("ALIGN", (2, 0), (2, 0), "RIGHT"),
+        ("ALIGN", (4, 0), (5, 0), "RIGHT"),
+        ("ALIGN", (3, 0), (3, 0), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+    ]
+    r = 1
+    for sec in computed.get("sections", []):
+        rows.append([Paragraph((sec.get("name") or "PEKERJAAN").upper(), st_secname), "", "", "", "",
+                     Paragraph(rupiah(sec.get("subtotal", 0)), st_numb)])
+        style_cmds += [("BACKGROUND", (0, r), (-1, r), SECBG), ("SPAN", (0, r), (4, r)),
+                       ("FONTNAME", (5, r), (5, r), "Helvetica-Bold")]
+        r += 1
+        for si in sec.get("subItems", []):
+            qty = si.get("qty", 0)
+            qty_s = (f"{qty:.2f}".rstrip("0").rstrip(".")) if isinstance(qty, float) else str(qty)
+            rows.append([
+                Paragraph(str(si.get("no", "")), st_cell),
+                Paragraph(si.get("name") or "-", st_cell),
+                Paragraph(qty_s, st_num),
+                Paragraph(si.get("unit") or "", ParagraphStyle("u", parent=st_cell, alignment=TA_CENTER)),
+                Paragraph(rupiah(si.get("hargaSatuan", 0)), st_num),
+                Paragraph(rupiah(si.get("nilai", 0)), st_num),
+            ])
+            style_cmds += [("LINEBELOW", (0, r), (-1, r), 0.4, LINE)]
+            r += 1
+            for m in si.get("materials", []):
+                nm = m.get("name") or "-"
+                val = int(m.get("nilai") or 0)
+                tail = ("  (" + rupiah(val) + ")") if val else ""
+                rows.append(["", Paragraph("• " + nm + tail, st_mat), "", "", "", ""])
+                style_cmds += [("SPAN", (1, r), (5, r)), ("TOPPADDING", (0, r), (-1, r), 1), ("BOTTOMPADDING", (0, r), (-1, r), 1)]
+                r += 1
+
+    tbl = Table(rows, colWidths=cw, repeatRows=1)
+    tbl.setStyle(TableStyle(style_cmds + [
+        ("BOX", (0, 0), (-1, -1), 0.6, LINE),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.6, DARK),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 6))
+
+    # ---- Summary (right aligned)
+    def sumrow(label, val, bold=False, big=False):
+        ls = ParagraphStyle("sl", fontName="Helvetica-Bold" if bold else "Helvetica", fontSize=11 if big else 9,
+                            textColor=colors.white if big else DARK, alignment=TA_RIGHT, leading=13)
+        vs = ParagraphStyle("sv", fontName="Helvetica-Bold", fontSize=11 if big else 9,
+                            textColor=colors.white if big else DARK, alignment=TA_RIGHT, leading=13)
+        return [Paragraph(label, ls), Paragraph(rupiah(val), vs)]
+
+    srows = [sumrow("Sub Total", computed.get("totalItems", 0))]
+    if computed.get("discount", 0):
+        srows.append(sumrow("Discount", -computed.get("discount", 0)))
+    if computed.get("ppnEnabled"):
+        srows.append(sumrow(f"PPN {computed.get('ppnPercent', 0):g}%", computed.get("ppnAmount", 0)))
+    srows.append(sumrow("GRAND TOTAL", computed.get("grandTotal", 0), bold=True, big=True))
+    ncols = len(srows)
+    stbl = Table(srows, colWidths=[content_w * 0.22, content_w * 0.22])
+    scmd = [("ALIGN", (0, 0), (-1, -1), "RIGHT"), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LINEBELOW", (0, 0), (-1, ncols - 2), 0.4, LINE),
+            ("BACKGROUND", (0, ncols - 1), (-1, ncols - 1), AMBER)]
+    stbl.setStyle(TableStyle(scmd))
+    wrap = Table([[Paragraph("<i>Terbilang: " + _terbilang(computed.get("grandTotal", 0)) + "</i>", st_small), stbl]],
+                 colWidths=[content_w * 0.56, content_w * 0.44])
+    wrap.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(wrap)
+    story.append(Spacer(1, 10))
+
+    # ---- Termins
+    termins = computed.get("termins", []) or []
+    if termins:
+        trows = [[Paragraph("METODE PEMBAYARAN", st_cellb), Paragraph("%", st_numb), Paragraph("NOMINAL", st_numb)]]
+        for t in termins:
+            trows.append([Paragraph(t.get("label") or "-", st_cell),
+                          Paragraph(f"{t.get('percent', 0):g}%", st_num),
+                          Paragraph(rupiah(t.get("nominal", 0)), st_num)])
+        tt = Table(trows, colWidths=[content_w * 0.6, content_w * 0.12, content_w * 0.28])
+        tt.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("BOX", (0, 0), (-1, -1), 0.6, LINE),
+            ("INNERGRID", (0, 0), (-1, -1), 0.4, LINE),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        story.append(tt)
+        story.append(Spacer(1, 8))
+
+    # ---- Bank + notes
+    if rab.get("bankName") or rab.get("bankAccount"):
+        bank = f"<b>Pembayaran ditransfer ke:</b> {rab.get('bankName','')} {rab.get('bankAccount','')}"
+        if rab.get("bankHolder"):
+            bank += f" a/n {rab['bankHolder']}"
+        story.append(Paragraph(bank, st_cell))
+        story.append(Spacer(1, 4))
+    if rab.get("notes"):
+        story.append(Paragraph(rab["notes"].replace("\n", "<br/>"), st_small))
+        story.append(Spacer(1, 6))
+    story.append(Paragraph(
+        "<i>Informasi di atas merupakan penawaran, bukan faktur. Pekerjaan di luar penawaran akan dihitung ulang sebagai pekerjaan tambahan.</i>",
+        st_small))
+    story.append(Spacer(1, 16))
+
+    # ---- Signatures
+    st_sig = ParagraphStyle("sg", fontName="Helvetica", fontSize=9, textColor=DARK, alignment=TA_CENTER, leading=13)
+    left_name = rab.get("signerLeft") or rab.get("companyName") or "Kontraktor"
+    right_name = rab.get("signerRight") or rab.get("clientName") or "Klien"
+    sig = Table([[
+        Paragraph(f"Hormat kami,<br/><br/><br/><br/>________________________<br/><b>{left_name}</b>", st_sig),
+        Paragraph(f"Menyetujui,<br/><br/><br/><br/>________________________<br/><b>{right_name}</b>", st_sig),
+    ]], colWidths=[content_w / 2, content_w / 2])
+    sig.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(sig)
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()

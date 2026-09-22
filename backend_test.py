@@ -1,378 +1,541 @@
 #!/usr/bin/env python3
 """
-Backend API Test Suite for ProFinance Interior
-Testing: Demo client portal link survives daily demo reset
+Backend test for RAB Builder (Surat Penawaran) feature.
+Tests all RAB endpoints, math computation, premium gating, and deal-to-progress flow.
 """
-
 import requests
-import time
 import json
 import sys
-from typing import Dict, Any
 
-# Backend URL from frontend/.env
-BASE_URL = "https://fintech-design-6.preview.emergentagent.com/api"
-WEBHOOK_CRON_SECRET = "pf_cron_9x2Kv7Qr4mB1nZ6sL0aWd3Ht8Yc5Ep"
+# Internal backend URL
+BASE_URL = "http://localhost:8001/api"
 
-class Colors:
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    END = '\033[0m'
+# Test credentials
+PREMIUM_EMAIL = "premium@test.com"
+PREMIUM_PASSWORD = "Premium123"
 
-def log_test(name: str):
-    print(f"\n{Colors.BLUE}{'='*80}{Colors.END}")
-    print(f"{Colors.BLUE}TEST: {name}{Colors.END}")
-    print(f"{Colors.BLUE}{'='*80}{Colors.END}")
+def log(msg):
+    print(f"[TEST] {msg}")
 
-def log_pass(msg: str):
-    print(f"{Colors.GREEN}✓ PASS: {msg}{Colors.END}")
+def test_login_premium():
+    """Login with premium account and return token."""
+    log("1. Login with premium@test.com")
+    resp = requests.post(f"{BASE_URL}/auth/login", json={
+        "email": PREMIUM_EMAIL,
+        "password": PREMIUM_PASSWORD
+    })
+    if resp.status_code != 200:
+        log(f"❌ Login failed: {resp.status_code} - {resp.text}")
+        sys.exit(1)
+    data = resp.json()
+    token = data.get("token")
+    log(f"✅ Login successful, token: {token[:20]}...")
+    return token
 
-def log_fail(msg: str):
-    print(f"{Colors.RED}✗ FAIL: {msg}{Colors.END}")
+def test_create_rab(token):
+    """Create RAB with materials and verify math."""
+    log("2. POST /api/rab - Create RAB with materials")
+    
+    # RAB body with materials as specified in review request
+    body = {
+        "projectName": "RAB Test Penawaran",
+        "category": "Residensial",
+        "rab": {
+            "clientName": "Mba Grace",
+            "clientAddress": "Puri Imperium",
+            "clientPhone": "0812",
+            "quotationNo": "15/IX/26",
+            "quotationDate": "2026-09-17",
+            "companyName": "Furniture Interior",
+            "discount": 2417500,
+            "ppnEnabled": False,
+            "ppnPercent": 11,
+            "sections": [
+                {
+                    "name": "PEKERJAAN PERSIAPAN",
+                    "subItems": [
+                        {
+                            "name": "Mobilisasi",
+                            "qty": 1,
+                            "unit": "Ls",
+                            "hargaSatuan": 3500000,
+                            "materials": []
+                        }
+                    ]
+                },
+                {
+                    "name": "BEDROOM",
+                    "subItems": [
+                        {
+                            "name": "Lemari Pakaian",
+                            "qty": 3.11,
+                            "unit": "m2",
+                            "hargaSatuan": 2950000,
+                            "materials": [
+                                {"name": "Rail Slowmotion", "nilai": 250000},
+                                {"name": "Engsel", "nilai": 150000}
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "termins": [
+                {"label": "DP", "percent": 50},
+                {"label": "Termin", "percent": 30},
+                {"label": "Pelunasan", "percent": 20}
+            ]
+        }
+    }
+    
+    resp = requests.post(f"{BASE_URL}/rab", json=body, headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code != 200:
+        log(f"❌ Create RAB failed: {resp.status_code} - {resp.text}")
+        sys.exit(1)
+    
+    data = resp.json()
+    log(f"✅ RAB created, status: {data.get('status')}, project_id: {data.get('id')}")
+    
+    # Verify math
+    computed = data.get("computed", {})
+    log("\n=== MATH VERIFICATION ===")
+    
+    # Expected: Lemari sub-item nilai = round(3.11 * 2950000) + (250000 + 150000)
+    # = 9174500 + 400000 = 9574500
+    lemari_section = computed.get("sections", [])[1] if len(computed.get("sections", [])) > 1 else {}
+    lemari_subitem = lemari_section.get("subItems", [])[0] if lemari_section.get("subItems") else {}
+    lemari_nilai = lemari_subitem.get("nilai", 0)
+    expected_lemari = 9574500
+    log(f"Lemari Pakaian nilai: {lemari_nilai} (expected: {expected_lemari})")
+    if lemari_nilai != expected_lemari:
+        log(f"❌ MATH ERROR: Lemari nilai mismatch! Got {lemari_nilai}, expected {expected_lemari}")
+        sys.exit(1)
+    
+    # BEDROOM subtotal should be 9574500
+    bedroom_subtotal = lemari_section.get("subtotal", 0)
+    log(f"BEDROOM subtotal: {bedroom_subtotal} (expected: 9574500)")
+    if bedroom_subtotal != 9574500:
+        log(f"❌ MATH ERROR: BEDROOM subtotal mismatch!")
+        sys.exit(1)
+    
+    # PEKERJAAN PERSIAPAN subtotal should be 3500000
+    prep_section = computed.get("sections", [])[0] if computed.get("sections") else {}
+    prep_subtotal = prep_section.get("subtotal", 0)
+    log(f"PEKERJAAN PERSIAPAN subtotal: {prep_subtotal} (expected: 3500000)")
+    if prep_subtotal != 3500000:
+        log(f"❌ MATH ERROR: PEKERJAAN PERSIAPAN subtotal mismatch!")
+        sys.exit(1)
+    
+    # totalItems = 13074500
+    total_items = computed.get("totalItems", 0)
+    log(f"totalItems: {total_items} (expected: 13074500)")
+    if total_items != 13074500:
+        log(f"❌ MATH ERROR: totalItems mismatch!")
+        sys.exit(1)
+    
+    # grandTotal = 13074500 - 2417500 = 10657000 (ppn disabled)
+    grand_total = computed.get("grandTotal", 0)
+    log(f"grandTotal: {grand_total} (expected: 10657000)")
+    if grand_total != 10657000:
+        log(f"❌ MATH ERROR: grandTotal mismatch!")
+        sys.exit(1)
+    
+    # Verify project.nominal == grandTotal and project.rabTotal == totalItems
+    project_nominal = data.get("nominal", 0)
+    project_rab_total = data.get("rabTotal", 0)
+    log(f"project.nominal: {project_nominal} (expected: {grand_total})")
+    log(f"project.rabTotal: {project_rab_total} (expected: {total_items})")
+    if project_nominal != grand_total:
+        log(f"❌ MATH ERROR: project.nominal != grandTotal!")
+        sys.exit(1)
+    if project_rab_total != total_items:
+        log(f"❌ MATH ERROR: project.rabTotal != totalItems!")
+        sys.exit(1)
+    
+    # Verify termins
+    termins = computed.get("termins", [])
+    log(f"Termins: {termins}")
+    # DP 50% of 10657000 = 5328500
+    # Termin 30% = 3197100
+    # Pelunasan 20% = 2131400
+    expected_termins = [5328500, 3197100, 2131400]
+    for i, t in enumerate(termins):
+        if t.get("nominal") != expected_termins[i]:
+            log(f"❌ MATH ERROR: Termin {i} nominal mismatch! Got {t.get('nominal')}, expected {expected_termins[i]}")
+            sys.exit(1)
+    
+    log("✅ ALL MATH VERIFIED CORRECTLY!")
+    return data.get("id")
 
-def log_info(msg: str):
-    print(f"{Colors.YELLOW}ℹ INFO: {msg}{Colors.END}")
+def test_get_rab(token, project_id):
+    """GET /api/projects/{id}/rab"""
+    log(f"\n3. GET /api/projects/{project_id}/rab")
+    resp = requests.get(f"{BASE_URL}/projects/{project_id}/rab", headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code != 200:
+        log(f"❌ GET RAB failed: {resp.status_code} - {resp.text}")
+        sys.exit(1)
+    
+    data = resp.json()
+    log(f"✅ GET RAB successful")
+    log(f"   - projectName: {data.get('projectName')}")
+    log(f"   - status: {data.get('status')}")
+    log(f"   - rabSlug: {data.get('rabSlug')}")
+    log(f"   - computed.grandTotal: {data.get('computed', {}).get('grandTotal')}")
+    
+    if not data.get("rabSlug"):
+        log("❌ ERROR: rabSlug missing!")
+        sys.exit(1)
+    
+    return data.get("rabSlug")
 
-def test_demo_portal_link_survives_reset():
-    """
-    Test that client portal links from demo account survive the daily reset cron.
+def test_update_rab(token, project_id):
+    """PUT /api/projects/{id}/rab - change discount and verify re-sync"""
+    log(f"\n4. PUT /api/projects/{project_id}/rab - change discount to 0")
     
-    Bug: Previously, POST /api/cron/reset-demo deleted all demo projects and re-seeded
-    them with new IDs but WITHOUT portalSlug, causing 404 on previously shared links.
+    body = {
+        "projectName": "RAB Test Penawaran",
+        "category": "Residensial",
+        "rab": {
+            "clientName": "Mba Grace",
+            "clientAddress": "Puri Imperium",
+            "clientPhone": "0812",
+            "quotationNo": "15/IX/26",
+            "quotationDate": "2026-09-17",
+            "companyName": "Furniture Interior",
+            "discount": 0,  # Changed from 2417500 to 0
+            "ppnEnabled": False,
+            "ppnPercent": 11,
+            "sections": [
+                {
+                    "name": "PEKERJAAN PERSIAPAN",
+                    "subItems": [
+                        {
+                            "name": "Mobilisasi",
+                            "qty": 1,
+                            "unit": "Ls",
+                            "hargaSatuan": 3500000,
+                            "materials": []
+                        }
+                    ]
+                },
+                {
+                    "name": "BEDROOM",
+                    "subItems": [
+                        {
+                            "name": "Lemari Pakaian",
+                            "qty": 3.11,
+                            "unit": "m2",
+                            "hargaSatuan": 2950000,
+                            "materials": [
+                                {"name": "Rail Slowmotion", "nilai": 250000},
+                                {"name": "Engsel", "nilai": 150000}
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "termins": [
+                {"label": "DP", "percent": 50},
+                {"label": "Termin", "percent": 30},
+                {"label": "Pelunasan", "percent": 20}
+            ]
+        }
+    }
     
-    Fix: (1) seed_demo assigns stable "-demo" slugs; (2) _reset_demo_job preserves
-    existing slugs by name before deletion and re-applies them after re-seeding.
-    """
+    resp = requests.put(f"{BASE_URL}/projects/{project_id}/rab", json=body, headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code != 200:
+        log(f"❌ Update RAB failed: {resp.status_code} - {resp.text}")
+        sys.exit(1)
     
-    # Step 1: Get demo token
-    log_test("Step 1: Get demo account token")
-    try:
-        resp = requests.post(f"{BASE_URL}/auth/demo", timeout=10)
-        log_info(f"POST /api/auth/demo -> {resp.status_code}")
-        
-        if resp.status_code != 200:
-            log_fail(f"Expected 200, got {resp.status_code}")
-            log_info(f"Response: {resp.text}")
-            return False
-        
-        data = resp.json()
-        demo_token = data.get("token")
-        if not demo_token:
-            log_fail("No token in response")
-            return False
-        
-        log_pass(f"Got demo token (length: {len(demo_token)})")
-        
-    except Exception as e:
-        log_fail(f"Exception during demo login: {e}")
-        return False
+    log("✅ RAB updated")
     
-    # Step 2: Get projects and their portal links
-    log_test("Step 2: Get demo projects and portal links")
-    headers = {"Authorization": f"Bearer {demo_token}"}
+    # GET again to verify
+    log("   Verifying updated values...")
+    resp = requests.get(f"{BASE_URL}/projects/{project_id}/rab", headers={"Authorization": f"Bearer {token}"})
+    data = resp.json()
+    computed = data.get("computed", {})
     
-    try:
-        resp = requests.get(f"{BASE_URL}/projects", headers=headers, timeout=10)
-        log_info(f"GET /api/projects -> {resp.status_code}")
-        
-        if resp.status_code != 200:
-            log_fail(f"Expected 200, got {resp.status_code}")
-            return False
-        
-        projects = resp.json()
-        if not projects or len(projects) == 0:
-            log_fail("No projects found in demo account")
-            return False
-        
-        log_pass(f"Found {len(projects)} demo projects")
-        
-        # Get portal links for all projects
-        project_data = []
-        for p in projects:
-            pid = p.get("id")
-            pname = p.get("name")
-            
-            resp = requests.get(f"{BASE_URL}/projects/{pid}/portal-link", headers=headers, timeout=10)
-            log_info(f"GET /api/projects/{pid}/portal-link -> {resp.status_code}")
-            
-            if resp.status_code != 200:
-                log_fail(f"Expected 200 for project {pname}, got {resp.status_code}")
-                return False
-            
-            link_data = resp.json()
-            slug = link_data.get("slug")
-            
-            if not slug:
-                log_fail(f"No slug returned for project {pname}")
-                return False
-            
-            project_data.append({
-                "id": pid,
-                "name": pname,
-                "slug": slug
-            })
-            log_pass(f"Project '{pname}' (id: {pid[:8]}...) has slug: {slug}")
-        
-    except Exception as e:
-        log_fail(f"Exception during project fetch: {e}")
-        return False
+    # With discount=0, grandTotal should equal totalItems (13074500)
+    grand_total = computed.get("grandTotal", 0)
+    total_items = computed.get("totalItems", 0)
+    log(f"   - grandTotal: {grand_total} (expected: 13074500)")
+    log(f"   - totalItems: {total_items} (expected: 13074500)")
     
-    # Step 3: Test public portal access (no auth) BEFORE reset
-    log_test("Step 3: Test public portal access (no auth) BEFORE reset")
+    if grand_total != 13074500 or total_items != 13074500:
+        log(f"❌ ERROR: Updated values incorrect!")
+        sys.exit(1)
     
-    test_slug = project_data[0]["slug"]
+    # Verify project.nominal and rabTotal re-synced (still Prospek)
+    resp = requests.get(f"{BASE_URL}/projects/{project_id}", headers={"Authorization": f"Bearer {token}"})
+    project = resp.json()
+    log(f"   - project.nominal: {project.get('nominal')} (expected: 13074500)")
+    log(f"   - project.rabTotal: {project.get('rabTotal')} (expected: 13074500)")
+    log(f"   - project.status: {project.get('status')} (expected: Prospek)")
     
-    try:
-        # Test /api/public/portal/{slug}
-        resp = requests.get(f"{BASE_URL}/public/portal/{test_slug}", timeout=10)
-        log_info(f"GET /api/public/portal/{test_slug} -> {resp.status_code}")
-        
-        if resp.status_code != 200:
-            log_fail(f"Expected 200, got {resp.status_code}")
-            log_info(f"Response: {resp.text}")
-            return False
-        
-        portal_data = resp.json()
-        if not portal_data.get("project"):
-            log_fail("No project data in portal response")
-            return False
-        
-        log_pass(f"Public portal returns project: {portal_data['project'].get('name')}")
-        
-        # Test /api/public/portal/{slug}/share
-        resp = requests.get(f"{BASE_URL}/public/portal/{test_slug}/share", timeout=10)
-        log_info(f"GET /api/public/portal/{test_slug}/share -> {resp.status_code}")
-        
-        if resp.status_code != 200:
-            log_fail(f"Expected 200, got {resp.status_code}")
-            return False
-        
-        html_content = resp.text
-        if "/portal/" not in html_content:
-            log_fail("Share page doesn't contain portal redirect")
-            return False
-        
-        log_pass(f"Share page returns HTML with redirect (length: {len(html_content)} bytes)")
-        
-    except Exception as e:
-        log_fail(f"Exception during public portal access: {e}")
-        return False
+    if project.get("nominal") != 13074500 or project.get("rabTotal") != 13074500:
+        log(f"❌ ERROR: Project values not re-synced!")
+        sys.exit(1)
     
-    # Step 4: CRITICAL - Trigger the daily reset cron
-    log_test("Step 4: CRITICAL - Trigger daily demo reset cron")
-    
-    try:
-        # First test: unauthorized access should fail
-        resp = requests.post(f"{BASE_URL}/cron/reset-demo", timeout=10)
-        log_info(f"POST /api/cron/reset-demo (no auth) -> {resp.status_code}")
-        
-        if resp.status_code != 401:
-            log_fail(f"Expected 401 for unauthorized, got {resp.status_code}")
-            return False
-        
-        log_pass("Unauthorized cron access correctly returns 401")
-        
-        # Now trigger with correct auth
-        cron_headers = {"Authorization": f"Bearer {WEBHOOK_CRON_SECRET}"}
-        resp = requests.post(f"{BASE_URL}/cron/reset-demo", headers=cron_headers, timeout=10)
-        log_info(f"POST /api/cron/reset-demo (with auth) -> {resp.status_code}")
-        
-        if resp.status_code != 200:
-            log_fail(f"Expected 200, got {resp.status_code}")
-            log_info(f"Response: {resp.text}")
-            return False
-        
-        cron_result = resp.json()
-        if not cron_result.get("ok") or not cron_result.get("queued"):
-            log_fail(f"Unexpected cron response: {cron_result}")
-            return False
-        
-        log_pass("Reset cron triggered successfully: {ok: true, queued: true}")
-        log_info("Waiting 5 seconds for background job to complete...")
-        time.sleep(5)
-        
-    except Exception as e:
-        log_fail(f"Exception during cron trigger: {e}")
-        return False
-    
-    # Step 5: Verify project IDs changed BUT slugs preserved
-    log_test("Step 5: Verify project IDs changed BUT slugs preserved")
-    
-    try:
-        resp = requests.get(f"{BASE_URL}/projects", headers=headers, timeout=10)
-        log_info(f"GET /api/projects (after reset) -> {resp.status_code}")
-        
-        if resp.status_code != 200:
-            log_fail(f"Expected 200, got {resp.status_code}")
-            return False
-        
-        new_projects = resp.json()
-        if len(new_projects) != len(projects):
-            log_fail(f"Project count changed: {len(projects)} -> {len(new_projects)}")
-            return False
-        
-        log_pass(f"Project count unchanged: {len(new_projects)}")
-        
-        # Check that IDs changed (proving reset happened)
-        old_ids = {p["id"] for p in project_data}
-        new_ids = {p["id"] for p in new_projects}
-        
-        if old_ids == new_ids:
-            log_fail("Project IDs did NOT change - reset may not have happened!")
-            return False
-        
-        log_pass(f"Project IDs changed (reset confirmed): {len(old_ids & new_ids)} common IDs")
-        
-        # Check that slugs are preserved
-        slugs_preserved = 0
-        slugs_changed = 0
-        
-        for old_proj in project_data:
-            old_name = old_proj["name"]
-            old_slug = old_proj["slug"]
-            
-            # Find matching project by name in new projects
-            new_proj = next((p for p in new_projects if p.get("name") == old_name), None)
-            if not new_proj:
-                log_fail(f"Project '{old_name}' not found after reset")
-                return False
-            
-            new_id = new_proj["id"]
-            
-            # Get new portal link
-            resp = requests.get(f"{BASE_URL}/projects/{new_id}/portal-link", headers=headers, timeout=10)
-            if resp.status_code != 200:
-                log_fail(f"Failed to get portal link for '{old_name}' after reset")
-                return False
-            
-            new_slug = resp.json().get("slug")
-            
-            if new_slug == old_slug:
-                slugs_preserved += 1
-                log_pass(f"✓ PRESERVED: '{old_name}' kept slug '{old_slug}'")
-            else:
-                slugs_changed += 1
-                log_fail(f"✗ CHANGED: '{old_name}' slug changed from '{old_slug}' to '{new_slug}'")
-        
-        if slugs_changed > 0:
-            log_fail(f"CRITICAL: {slugs_changed} slugs changed after reset!")
-            return False
-        
-        log_pass(f"ALL {slugs_preserved} portal slugs preserved after reset!")
-        
-    except Exception as e:
-        log_fail(f"Exception during post-reset verification: {e}")
-        return False
-    
-    # Step 6: Re-check public portal access AFTER reset (the bug test!)
-    log_test("Step 6: CRITICAL - Verify old links still work AFTER reset")
-    
-    try:
-        # Test the SAME slug from before reset
-        resp = requests.get(f"{BASE_URL}/public/portal/{test_slug}", timeout=10)
-        log_info(f"GET /api/public/portal/{test_slug} (after reset) -> {resp.status_code}")
-        
-        if resp.status_code != 200:
-            log_fail(f"CRITICAL BUG: Old portal link returns {resp.status_code} after reset!")
-            log_info(f"Response: {resp.text}")
-            return False
-        
-        portal_data = resp.json()
-        log_pass(f"✓ Old portal link STILL WORKS: {portal_data['project'].get('name')}")
-        
-        # Test share page
-        resp = requests.get(f"{BASE_URL}/public/portal/{test_slug}/share", timeout=10)
-        log_info(f"GET /api/public/portal/{test_slug}/share (after reset) -> {resp.status_code}")
-        
-        if resp.status_code != 200:
-            log_fail(f"CRITICAL BUG: Old share link returns {resp.status_code} after reset!")
-            return False
-        
-        log_pass("✓ Old share link STILL WORKS after reset")
-        
-        # Test a few more slugs to be thorough
-        for proj in project_data[1:]:
-            slug = proj["slug"]
-            resp = requests.get(f"{BASE_URL}/public/portal/{slug}", timeout=10)
-            if resp.status_code != 200:
-                log_fail(f"Portal link for '{proj['name']}' broken after reset: {resp.status_code}")
-                return False
-            log_pass(f"✓ Portal link for '{proj['name']}' still works")
-        
-    except Exception as e:
-        log_fail(f"Exception during post-reset portal access: {e}")
-        return False
-    
-    # Step 7: Regression test - portal-link/reset blocked for demo (read-only)
-    log_test("Step 7: Regression test - portal-link/reset blocked for demo user")
-    
-    try:
-        # Pick first project
-        test_project = new_projects[0]
-        test_id = test_project["id"]
-        test_name = test_project["name"]
-        
-        # Get current slug
-        resp = requests.get(f"{BASE_URL}/projects/{test_id}/portal-link", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            log_fail("Failed to get current portal link")
-            return False
-        
-        old_slug = resp.json().get("slug")
-        log_info(f"Current slug for '{test_name}': {old_slug}")
-        
-        # Reset portal link - should be blocked for demo user (read-only)
-        resp = requests.post(f"{BASE_URL}/projects/{test_id}/portal-link/reset", headers=headers, timeout=10)
-        log_info(f"POST /api/projects/{test_id}/portal-link/reset -> {resp.status_code}")
-        
-        if resp.status_code != 403:
-            log_fail(f"Expected 403 (demo read-only), got {resp.status_code}")
-            return False
-        
-        log_pass("Demo user correctly blocked from resetting portal link (read-only mode)")
-        
-        # Verify the error message mentions demo mode
-        if resp.status_code == 403:
-            error_detail = resp.json().get("detail", "")
-            if "Demo" in error_detail or "demo" in error_detail:
-                log_pass(f"Error message correctly indicates demo mode: '{error_detail}'")
-            else:
-                log_info(f"403 error detail: {error_detail}")
-        
-    except Exception as e:
-        log_fail(f"Exception during regression test: {e}")
-        return False
-    
-    return True
+    log("✅ Update and re-sync verified!")
 
+def test_rab_pdf(token, project_id):
+    """GET /api/projects/{id}/rab/pdf?auth={token}"""
+    log(f"\n5. GET /api/projects/{project_id}/rab/pdf?auth={{token}}")
+    resp = requests.get(f"{BASE_URL}/projects/{project_id}/rab/pdf?auth={token}")
+    if resp.status_code != 200:
+        log(f"❌ RAB PDF failed: {resp.status_code} - {resp.text}")
+        sys.exit(1)
+    
+    content_type = resp.headers.get("Content-Type", "")
+    pdf_bytes = resp.content
+    
+    log(f"✅ RAB PDF generated")
+    log(f"   - Content-Type: {content_type}")
+    log(f"   - Size: {len(pdf_bytes)} bytes")
+    log(f"   - First 8 bytes: {pdf_bytes[:8]}")
+    
+    if content_type != "application/pdf":
+        log(f"❌ ERROR: Wrong Content-Type!")
+        sys.exit(1)
+    
+    if not pdf_bytes.startswith(b"%PDF"):
+        log(f"❌ ERROR: Not a valid PDF (missing %PDF header)!")
+        sys.exit(1)
+    
+    log("✅ PDF valid (%PDF header present)")
+
+def test_rab_share_link(token, project_id):
+    """GET /api/projects/{id}/rab/share-link and public PDF"""
+    log(f"\n6. GET /api/projects/{project_id}/rab/share-link")
+    resp = requests.get(f"{BASE_URL}/projects/{project_id}/rab/share-link", headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code != 200:
+        log(f"❌ RAB share-link failed: {resp.status_code} - {resp.text}")
+        sys.exit(1)
+    
+    data = resp.json()
+    slug = data.get("slug")
+    log(f"✅ Share link obtained: {slug}")
+    
+    # Test public PDF access (no auth)
+    log(f"   Testing public PDF: GET /api/public/rab/{slug}/pdf")
+    resp = requests.get(f"{BASE_URL}/public/rab/{slug}/pdf")
+    if resp.status_code != 200:
+        log(f"❌ Public RAB PDF failed: {resp.status_code} - {resp.text}")
+        sys.exit(1)
+    
+    content_type = resp.headers.get("Content-Type", "")
+    pdf_bytes = resp.content
+    
+    log(f"✅ Public RAB PDF accessible")
+    log(f"   - Content-Type: {content_type}")
+    log(f"   - Size: {len(pdf_bytes)} bytes")
+    
+    if content_type != "application/pdf" or not pdf_bytes.startswith(b"%PDF"):
+        log(f"❌ ERROR: Invalid public PDF!")
+        sys.exit(1)
+    
+    log("✅ Public PDF valid")
+
+def test_deal_to_progress(token, project_id):
+    """POST /api/projects/{id}/deal and verify progress mapping"""
+    log(f"\n7. POST /api/projects/{project_id}/deal - Convert to Berjalan")
+    resp = requests.post(f"{BASE_URL}/projects/{project_id}/deal", headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code != 200:
+        log(f"❌ Deal failed: {resp.status_code} - {resp.text}")
+        sys.exit(1)
+    
+    data = resp.json()
+    log(f"✅ Deal successful, status: {data.get('status')}")
+    
+    if data.get("status") != "Berjalan":
+        log(f"❌ ERROR: Status not changed to Berjalan!")
+        sys.exit(1)
+    
+    # GET progress-summary to verify work_items created
+    log(f"   GET /api/projects/{project_id}/progress-summary")
+    resp = requests.get(f"{BASE_URL}/projects/{project_id}/progress-summary", headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code != 200:
+        log(f"❌ Progress summary failed: {resp.status_code} - {resp.text}")
+        sys.exit(1)
+    
+    progress = resp.json()
+    items = progress.get("items", [])
+    log(f"✅ Progress summary retrieved, {len(items)} work_items")
+    
+    # Verify 2 work_items created (PEKERJAAN PERSIAPAN, BEDROOM)
+    if len(items) != 2:
+        log(f"❌ ERROR: Expected 2 work_items, got {len(items)}")
+        sys.exit(1)
+    
+    # Verify work_item values match RAB section subtotals
+    # PEKERJAAN PERSIAPAN: 3500000
+    # BEDROOM: 9574500
+    expected_values = [3500000, 9574500]
+    for i, item in enumerate(items):
+        item_nilai = item.get("nilai", 0)
+        log(f"   - {item.get('name')}: nilai={item_nilai}, weight={item.get('weight')}%")
+        if item_nilai != expected_values[i]:
+            log(f"❌ ERROR: Work item nilai mismatch! Got {item_nilai}, expected {expected_values[i]}")
+            sys.exit(1)
+    
+    # Verify sub_items created
+    bedroom_item = items[1]
+    sub_items = bedroom_item.get("subItems", [])
+    log(f"   - BEDROOM has {len(sub_items)} sub_items")
+    
+    if len(sub_items) != 1:
+        log(f"❌ ERROR: Expected 1 sub_item for BEDROOM, got {len(sub_items)}")
+        sys.exit(1)
+    
+    # Verify sub_item harga matches RAB subItem nilai (9574500)
+    lemari_sub = sub_items[0]
+    lemari_harga = lemari_sub.get("harga", 0)
+    log(f"   - Lemari Pakaian sub_item: harga={lemari_harga} (expected: 9574500)")
+    
+    if lemari_harga != 9574500:
+        log(f"❌ ERROR: Sub_item harga mismatch!")
+        sys.exit(1)
+    
+    # Verify weights sum to ~100%
+    total_weight = sum(item.get("weight", 0) for item in items)
+    log(f"   - Total weight: {total_weight}% (expected: ~100%)")
+    
+    if abs(total_weight - 100) > 1:
+        log(f"❌ ERROR: Weights don't sum to 100%!")
+        sys.exit(1)
+    
+    log("✅ Deal-to-Progress mapping verified!")
+    
+    # Test idempotency: calling deal again should NOT duplicate work_items
+    log("   Testing idempotency: calling deal again...")
+    resp = requests.post(f"{BASE_URL}/projects/{project_id}/deal", headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code != 200:
+        log(f"❌ Second deal call failed: {resp.status_code}")
+        sys.exit(1)
+    
+    resp = requests.get(f"{BASE_URL}/projects/{project_id}/progress-summary", headers={"Authorization": f"Bearer {token}"})
+    progress2 = resp.json()
+    items2 = progress2.get("items", [])
+    
+    if len(items2) != 2:
+        log(f"❌ ERROR: Deal not idempotent! Got {len(items2)} work_items after second call")
+        sys.exit(1)
+    
+    log("✅ Deal is idempotent (no duplicate work_items)")
+
+def test_premium_gating(token):
+    """Test premium gating: free user should get 403"""
+    log("\n8. Premium gating: Register free user and test POST /api/rab")
+    
+    # Register new free user
+    import time
+    email = f"test_rab_free_{int(time.time())}@test.com"
+    resp = requests.post(f"{BASE_URL}/auth/register", json={
+        "email": email,
+        "name": "Test Free User",
+        "password": "Test123456"
+    })
+    
+    if resp.status_code != 200:
+        log(f"❌ Register failed: {resp.status_code} - {resp.text}")
+        sys.exit(1)
+    
+    free_token = resp.json().get("token")
+    log(f"✅ Free user registered: {email}")
+    
+    # Try to create RAB with free user
+    body = {
+        "projectName": "Test RAB Free",
+        "category": "Residensial",
+        "rab": {
+            "clientName": "Test",
+            "sections": [],
+            "termins": []
+        }
+    }
+    
+    resp = requests.post(f"{BASE_URL}/rab", json=body, headers={"Authorization": f"Bearer {free_token}"})
+    
+    if resp.status_code != 403:
+        log(f"❌ ERROR: Free user should get 403, got {resp.status_code}")
+        sys.exit(1)
+    
+    log(f"✅ Free user correctly blocked with 403")
+
+def test_demo_gating():
+    """Test demo gating: demo user should get 403 on POST /api/rab"""
+    log("\n9. Demo gating: Demo user should get 403 on POST /api/rab")
+    
+    # Get demo token
+    resp = requests.post(f"{BASE_URL}/auth/demo")
+    if resp.status_code != 200:
+        log(f"❌ Demo login failed: {resp.status_code}")
+        sys.exit(1)
+    
+    demo_token = resp.json().get("token")
+    log(f"✅ Demo user logged in")
+    
+    # Try to create RAB with demo user
+    body = {
+        "projectName": "Test RAB Demo",
+        "category": "Residensial",
+        "rab": {
+            "clientName": "Test",
+            "sections": [],
+            "termins": []
+        }
+    }
+    
+    resp = requests.post(f"{BASE_URL}/rab", json=body, headers={"Authorization": f"Bearer {demo_token}"})
+    
+    if resp.status_code != 403:
+        log(f"❌ ERROR: Demo user should get 403, got {resp.status_code}")
+        log(f"   Response: {resp.text}")
+        sys.exit(1)
+    
+    log(f"✅ Demo user correctly blocked with 403 (read-only mode)")
 
 def main():
-    print(f"\n{Colors.BLUE}{'='*80}{Colors.END}")
-    print(f"{Colors.BLUE}ProFinance Interior - Backend API Test Suite{Colors.END}")
-    print(f"{Colors.BLUE}Testing: Demo client portal link survives daily demo reset{Colors.END}")
-    print(f"{Colors.BLUE}Base URL: {BASE_URL}{Colors.END}")
-    print(f"{Colors.BLUE}{'='*80}{Colors.END}")
+    log("=" * 60)
+    log("RAB BUILDER (SURAT PENAWARAN) BACKEND TEST")
+    log("=" * 60)
     
     try:
-        success = test_demo_portal_link_survives_reset()
+        # 1. Login premium
+        token = test_login_premium()
         
-        print(f"\n{Colors.BLUE}{'='*80}{Colors.END}")
-        if success:
-            print(f"{Colors.GREEN}✓✓✓ ALL TESTS PASSED ✓✓✓{Colors.END}")
-            print(f"{Colors.GREEN}Bug fix verified: Demo client portal links survive daily reset{Colors.END}")
-            sys.exit(0)
-        else:
-            print(f"{Colors.RED}✗✗✗ TESTS FAILED ✗✗✗{Colors.END}")
-            print(f"{Colors.RED}Bug NOT fixed: Portal links broken after reset{Colors.END}")
-            sys.exit(1)
+        # 2. Create RAB with materials and verify math
+        project_id = test_create_rab(token)
+        
+        # 3. GET RAB
+        rab_slug = test_get_rab(token, project_id)
+        
+        # 4. Update RAB (change discount)
+        test_update_rab(token, project_id)
+        
+        # 5. RAB PDF
+        test_rab_pdf(token, project_id)
+        
+        # 6. Share link and public PDF
+        test_rab_share_link(token, project_id)
+        
+        # 7. Deal to Progress
+        test_deal_to_progress(token, project_id)
+        
+        # 8. Premium gating
+        test_premium_gating(token)
+        
+        # 9. Demo gating
+        test_demo_gating()
+        
+        log("\n" + "=" * 60)
+        log("✅ ALL RAB BUILDER TESTS PASSED!")
+        log("=" * 60)
+        
     except Exception as e:
-        print(f"\n{Colors.RED}FATAL ERROR: {e}{Colors.END}")
+        log(f"\n❌ TEST FAILED WITH EXCEPTION: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

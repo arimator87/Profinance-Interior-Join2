@@ -38,7 +38,7 @@ from auth import (
     reset_password_with_phone,
 )
 from storage import init_storage, put_object, get_object, APP_NAME, MIME_TYPES
-from pdf_report import build_report_pdf, build_progress_pdf
+from pdf_report import build_report_pdf, build_progress_pdf, build_rab_pdf
 import backup as backup_mod
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -79,6 +79,59 @@ async def ensure_portal_slug(p: dict) -> str:
     slug = f"{slugify(p.get('name'))}-{secrets.token_hex(3)}"
     await db.projects.update_one({"id": p["id"]}, {"$set": {"portalSlug": slug}})
     return slug
+
+
+async def ensure_rab_slug(p: dict) -> str:
+    if p.get("rabSlug"):
+        return p["rabSlug"]
+    slug = f"{slugify(p.get('name'))}-rab-{secrets.token_hex(3)}"
+    await db.projects.update_one({"id": p["id"]}, {"$set": {"rabSlug": slug}})
+    return slug
+
+
+def compute_rab(rab: dict) -> dict:
+    """Compute RAB totals. subItem.nilai = round(qty*hargaSatuan) + sum(material.nilai)."""
+    rab = rab or {}
+    sections_out = []
+    total_items = 0
+    idx = 0
+    for sec in rab.get("sections", []) or []:
+        subs_out = []
+        subtotal = 0
+        for si in sec.get("subItems", []) or []:
+            idx += 1
+            try:
+                qty = float(si.get("qty") or 0)
+            except (TypeError, ValueError):
+                qty = 0.0
+            harga = int(si.get("hargaSatuan") or 0)
+            base = round(qty * harga)
+            mats = si.get("materials", []) or []
+            mat_total = sum(int(m.get("nilai") or 0) for m in mats)
+            nilai = base + mat_total
+            subtotal += nilai
+            subs_out.append({
+                "id": si.get("id"), "no": idx, "name": si.get("name", ""),
+                "qty": qty, "unit": si.get("unit", "Unit"), "hargaSatuan": harga,
+                "base": base, "materials": mats, "materialTotal": mat_total, "nilai": nilai,
+            })
+        total_items += subtotal
+        sections_out.append({"id": sec.get("id"), "name": sec.get("name", ""), "subItems": subs_out, "subtotal": subtotal})
+    discount = int(rab.get("discount") or 0)
+    after = total_items - discount
+    ppn_enabled = bool(rab.get("ppnEnabled"))
+    ppn_percent = float(rab.get("ppnPercent") or 0)
+    ppn_amount = round(after * ppn_percent / 100) if ppn_enabled else 0
+    grand = after + ppn_amount
+    termins = []
+    for t in rab.get("termins", []) or []:
+        pct = float(t.get("percent") or 0)
+        termins.append({"label": t.get("label", ""), "percent": pct, "nominal": round(grand * pct / 100)})
+    return {
+        "sections": sections_out, "totalItems": total_items, "discount": discount,
+        "afterDiscount": after, "ppnEnabled": ppn_enabled, "ppnPercent": ppn_percent,
+        "ppnAmount": ppn_amount, "grandTotal": grand, "termins": termins,
+    }
 
 
 # ---------- Schemas ----------
@@ -161,6 +214,60 @@ class SubItemIn(BaseModel):
 
 class RabIn(BaseModel):
     rabTotal: int = 0
+
+
+class RabMaterialIn(BaseModel):
+    id: Optional[str] = None
+    name: str = ""
+    nilai: int = 0
+
+
+class RabSubItemIn(BaseModel):
+    id: Optional[str] = None
+    name: str = ""
+    qty: float = 1
+    unit: str = "Unit"
+    hargaSatuan: int = 0
+    materials: List[RabMaterialIn] = []
+
+
+class RabSectionIn(BaseModel):
+    id: Optional[str] = None
+    name: str = ""
+    subItems: List[RabSubItemIn] = []
+
+
+class RabTerminIn(BaseModel):
+    label: str = ""
+    percent: float = 0
+
+
+class RabDoc(BaseModel):
+    clientName: str = ""
+    clientAddress: str = ""
+    clientPhone: str = ""
+    quotationNo: str = ""
+    quotationDate: Optional[str] = None
+    companyName: str = ""
+    companyAddress: str = ""
+    companyPhone: str = ""
+    bankName: str = ""
+    bankAccount: str = ""
+    bankHolder: str = ""
+    signerLeft: str = ""
+    signerRight: str = ""
+    notes: str = ""
+    discount: int = 0
+    ppnEnabled: bool = False
+    ppnPercent: float = 11
+    sections: List[RabSectionIn] = []
+    termins: List[RabTerminIn] = []
+
+
+class RabCreateIn(BaseModel):
+    projectName: str
+    category: str = "Residensial"
+    rab: RabDoc
 
 
 # ---------- Finance calc ----------
@@ -1436,6 +1543,122 @@ async def reset_portal_link(project_id: str, user: dict = Depends(get_current_us
     slug = f"{slugify(p.get('name'))}-{secrets.token_hex(3)}"
     await db.projects.update_one({"id": project_id}, {"$set": {"portalSlug": slug}})
     return {"slug": slug}
+
+
+# ---------- RAB Builder / Surat Penawaran (Premium) ----------
+@api.post("/rab")
+async def create_rab(body: RabCreateIn, user: dict = Depends(require_premium)):
+    rab = body.rab.model_dump()
+    comp = compute_rab(rab)
+    pid = str(uuid.uuid4())
+    doc = {
+        "id": pid, "user_id": user["user_id"], "name": body.projectName,
+        "owner": rab.get("clientName", ""), "companyName": rab.get("companyName", ""),
+        "alamatProyek": rab.get("clientAddress", ""), "category": body.category,
+        "status": "Prospek", "nominal": comp["grandTotal"], "rabTotal": comp["totalItems"],
+        "rab": rab,
+        "portalSlug": f"{slugify(body.projectName)}-{secrets.token_hex(3)}",
+        "rabSlug": f"{slugify(body.projectName)}-rab-{secrets.token_hex(3)}",
+        "tanggalMulai": now_iso(), "targetSelesai": None, "thumbnail": None,
+        "createdAt": now_iso(),
+    }
+    await db.projects.insert_one(doc)
+    doc.pop("_id", None)
+    return {**{k: v for k, v in doc.items() if k != "user_id"}, "computed": comp}
+
+
+@api.get("/projects/{project_id}/rab")
+async def get_rab(project_id: str, user: dict = Depends(require_premium)):
+    p = await get_owned_project(project_id, user)
+    rab = p.get("rab") or {}
+    return {
+        "projectId": p["id"], "projectName": p.get("name"), "category": p.get("category"),
+        "status": p.get("status"), "rab": rab, "computed": compute_rab(rab),
+        "rabSlug": p.get("rabSlug"),
+    }
+
+
+@api.put("/projects/{project_id}/rab")
+async def update_rab(project_id: str, body: RabCreateIn, user: dict = Depends(require_premium)):
+    p = await get_owned_project(project_id, user)
+    rab = body.rab.model_dump()
+    comp = compute_rab(rab)
+    updates = {
+        "rab": rab, "name": body.projectName, "category": body.category,
+        "owner": rab.get("clientName", ""), "companyName": rab.get("companyName", ""),
+        "alamatProyek": rab.get("clientAddress", ""),
+    }
+    if p.get("status") == "Prospek":
+        updates["nominal"] = comp["grandTotal"]
+        updates["rabTotal"] = comp["totalItems"]
+    await db.projects.update_one({"id": project_id}, {"$set": updates})
+    return {"ok": True, "computed": comp, "rabSlug": p.get("rabSlug")}
+
+
+@api.post("/projects/{project_id}/deal")
+async def deal_project(project_id: str, user: dict = Depends(require_premium)):
+    p = await get_owned_project(project_id, user)
+    rab = p.get("rab") or {}
+    comp = compute_rab(rab)
+    # Populate Progress (work_items + sub_items) once, so RAB values flow into progress tracking.
+    existing = await db.work_items.count_documents({"project_id": project_id})
+    if existing == 0:
+        for sec in comp["sections"]:
+            wi_id = str(uuid.uuid4())
+            await db.work_items.insert_one({
+                "id": wi_id, "project_id": project_id, "name": sec.get("name") or "Pekerjaan",
+                "nilai": sec.get("subtotal", 0), "startDate": None, "endDate": None,
+                "createdAt": now_iso(),
+            })
+            for si in sec.get("subItems", []):
+                await db.sub_items.insert_one({
+                    "id": str(uuid.uuid4()), "work_item_id": wi_id, "project_id": project_id,
+                    "name": si.get("name") or "Item", "harga": si.get("nilai", 0),
+                    "status": False, "createdAt": now_iso(),
+                })
+    await db.projects.update_one({"id": project_id}, {"$set": {
+        "status": "Berjalan", "rabTotal": comp["totalItems"], "nominal": comp["grandTotal"],
+        "dealAt": now_iso(),
+    }})
+    p = await db.projects.find_one({"id": project_id}, {"_id": 0})
+    summary = await compute_summary(p)
+    return {**{k: v for k, v in p.items() if k != "user_id"}, "summary": summary}
+
+
+@api.get("/projects/{project_id}/rab/share-link")
+async def rab_share_link(project_id: str, user: dict = Depends(require_premium)):
+    p = await get_owned_project(project_id, user)
+    slug = await ensure_rab_slug(p)
+    return {"slug": slug}
+
+
+@api.get("/projects/{project_id}/rab/pdf")
+async def rab_pdf(project_id: str, request: Request, auth: Optional[str] = Query(None)):
+    user = await _user_from_request_or_query(request, auth)
+    await require_premium(user)
+    p = await get_owned_project(project_id, user)
+    rab = p.get("rab") or {}
+    pdf_bytes = build_rab_pdf(p, rab, compute_rab(rab))
+    safe = slugify(p.get("name") or "rab")
+    return StreamingResponse(
+        iter([pdf_bytes]), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="Penawaran-{safe}.pdf"'},
+    )
+
+
+@api.get("/public/rab/{slug}/pdf")
+async def public_rab_pdf(slug: str):
+    p = await db.projects.find_one({"rabSlug": slug}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Penawaran tidak ditemukan")
+    rab = p.get("rab") or {}
+    pdf_bytes = build_rab_pdf(p, rab, compute_rab(rab))
+    safe = slugify(p.get("name") or "rab")
+    return StreamingResponse(
+        iter([pdf_bytes]), media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="Penawaran-{safe}.pdf"'},
+    )
+
 
 
 # ---------- RAB Excel import ----------
