@@ -5,6 +5,35 @@ export function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+// Read an image File and return a downscaled PNG data URI (keeps payload small).
+export function fileToSignature(file, maxW = 600) {
+  return new Promise((resolve, reject) => {
+    if (!file) return reject(new Error("No file"));
+    if (!/image\/(png|jpe?g)/i.test(file.type)) return reject(new Error("Hanya file JPG/PNG"));
+    if (file.size > 5 * 1024 * 1024) return reject(new Error("Ukuran maksimal 5MB"));
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Gagal membaca file"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Gambar tidak valid"));
+      img.onload = () => {
+        const scale = Math.min(1, maxW / img.width);
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 export function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -59,6 +88,7 @@ export function emptyRab() {
     bankHolder: "",
     signerLeft: "",
     signerRight: "",
+    signatureImage: "",
     notes: "",
     discount: 0,
     ppnEnabled: false,

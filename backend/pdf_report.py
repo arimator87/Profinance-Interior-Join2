@@ -12,6 +12,8 @@ from reportlab.platypus import (
 )
 from reportlab.graphics.shapes import Drawing, Rect, Circle, String
 from reportlab.graphics.charts.piecharts import Pie
+from reportlab.lib.utils import ImageReader
+import base64 as _b64
 
 from storage import get_object
 
@@ -704,6 +706,22 @@ def _terbilang(n):
     return words.strip().capitalize() + " Rupiah"
 
 
+def _decode_signature(data_uri):
+    """Return (BytesIO, width_px, height_px) for a base64 data URI / raw base64, else None."""
+    if not data_uri or not isinstance(data_uri, str):
+        return None
+    try:
+        raw = data_uri.split(",", 1)[1] if "," in data_uri else data_uri
+        img_bytes = _b64.b64decode(raw)
+        bio = io.BytesIO(img_bytes)
+        ir = ImageReader(bio)
+        w, h = ir.getSize()
+        bio.seek(0)
+        return bio, w, h
+    except Exception:
+        return None
+
+
 def build_rab_pdf(project, rab, computed):
     """Surat Penawaran (RAB) — sections, sub-items, materials, totals, termins, bank & signatures."""
     buf = io.BytesIO()
@@ -730,6 +748,11 @@ def build_rab_pdf(project, rab, computed):
     st_numb = ParagraphStyle("nub", fontName="Helvetica-Bold", fontSize=8.5, textColor=DARK, leading=11, alignment=TA_RIGHT)
 
     story = []
+    # "Quotation by" small label so header never looks empty
+    company_label = (rab.get("companyName") or "").strip()
+    quotation_by = "Quotation by " + (company_label if company_label else "—")
+    st_qby = ParagraphStyle("qby", fontName="Helvetica-Oblique", fontSize=7.5, textColor=AMBER, leading=10, alignment=TA_RIGHT)
+
     # ---- Header: company (left) + title/meta (right)
     company = rab.get("companyName") or "Perusahaan Anda"
     co_info = "<br/>".join([x for x in [rab.get("companyAddress", ""), ("Telp: " + rab["companyPhone"]) if rab.get("companyPhone") else ""] if x])
@@ -740,7 +763,8 @@ def build_rab_pdf(project, rab, computed):
     if rab.get("quotationNo"):
         meta_lines.append(f"No : {rab['quotationNo']}")
     meta_lines.append("Tanggal : " + _fmt(rab.get("quotationDate")))
-    right = [Paragraph("SURAT PENAWARAN", st_title), Spacer(1, 3), Paragraph("<br/>".join(meta_lines), st_meta)]
+    right = [Paragraph("SURAT PENAWARAN", st_title), Spacer(1, 2), Paragraph(quotation_by, st_qby),
+             Spacer(1, 3), Paragraph("<br/>".join(meta_lines), st_meta)]
     head = Table([[left, right]], colWidths=[content_w * 0.58, content_w * 0.42])
     head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
     story.append(head)
@@ -877,17 +901,55 @@ def build_rab_pdf(project, rab, computed):
         st_small))
     story.append(Spacer(1, 16))
 
-    # ---- Signatures
+    # ---- Signatures (with optional uploaded signature image on the left/creator side)
     st_sig = ParagraphStyle("sg", fontName="Helvetica", fontSize=9, textColor=DARK, alignment=TA_CENTER, leading=13)
     left_name = rab.get("signerLeft") or rab.get("companyName") or "Kontraktor"
     right_name = rab.get("signerRight") or rab.get("clientName") or "Klien"
+
+    col_w = content_w / 2
+    sig_decoded = _decode_signature(rab.get("signatureImage"))
+    if sig_decoded:
+        bio, iw, ih = sig_decoded
+        max_w = 45 * mm
+        max_h = 22 * mm
+        ratio = (ih / iw) if iw else 0.4
+        draw_w = max_w
+        draw_h = draw_w * ratio
+        if draw_h > max_h:
+            draw_h = max_h
+            draw_w = draw_h / ratio if ratio else max_w
+        sig_img = RLImage(bio, width=draw_w, height=draw_h)
+        left_cell = [
+            Paragraph("Hormat kami,", st_sig), Spacer(1, 4),
+            sig_img, Spacer(1, 2),
+            Table([[""]], colWidths=[45 * mm], style=TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.6, DARK)])),
+            Paragraph(f"<b>{left_name}</b>", st_sig),
+        ]
+        left_tbl = Table([[c] for c in left_cell], colWidths=[col_w])
+        left_tbl.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER"), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+        left_block = left_tbl
+    else:
+        left_block = Paragraph(f"Hormat kami,<br/><br/><br/><br/>________________________<br/><b>{left_name}</b>", st_sig)
+
     sig = Table([[
-        Paragraph(f"Hormat kami,<br/><br/><br/><br/>________________________<br/><b>{left_name}</b>", st_sig),
+        left_block,
         Paragraph(f"Menyetujui,<br/><br/><br/><br/>________________________<br/><b>{right_name}</b>", st_sig),
-    ]], colWidths=[content_w / 2, content_w / 2])
+    ]], colWidths=[col_w, col_w])
     sig.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
     story.append(sig)
 
-    doc.build(story)
+    # ---- Footer: "Quotation by" on every page
+    def _rab_footer(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica-Oblique", 7.5)
+        canvas.setFillColor(GREYTX)
+        footer_txt = quotation_by + ("  ·  Telp: " + rab["companyPhone"] if rab.get("companyPhone") else "")
+        canvas.drawCentredString(A4[0] / 2, 8 * mm, footer_txt)
+        canvas.setStrokeColor(LINE)
+        canvas.setLineWidth(0.5)
+        canvas.line(14 * mm, 11 * mm, A4[0] - 14 * mm, 11 * mm)
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_rab_footer, onLaterPages=_rab_footer)
     buf.seek(0)
     return buf.read()

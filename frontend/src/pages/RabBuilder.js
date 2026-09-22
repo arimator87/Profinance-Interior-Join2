@@ -12,9 +12,10 @@ import { Switch } from "@/components/ui/switch";
 import {
   Loader2, Plus, Trash2, FileDown, Share2, CheckCircle2, ArrowLeft, Layers,
   Package, GripVertical, ChevronDown, ChevronRight, Building2, Save, Sparkles,
+  Upload, ImageIcon, BookmarkPlus, FolderInput,
 } from "lucide-react";
 import { rupiah } from "@/lib/format";
-import { computeRab, emptyRab, uid, num } from "@/lib/rab";
+import { computeRab, emptyRab, uid, num, fileToSignature } from "@/lib/rab";
 import { toast } from "sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -41,8 +42,39 @@ export default function RabBuilder() {
   const [dealing, setDealing] = useState(false);
   const [showCompany, setShowCompany] = useState(false);
   const [collapsed, setCollapsed] = useState({});
+  const [tplSaving, setTplSaving] = useState(false);
+  const [hasTemplate, setHasTemplate] = useState(false);
 
   const computed = useMemo(() => computeRab(rab), [rab]);
+
+  // Auto-load saved company template for brand-new RABs (so user doesn't retype)
+  useEffect(() => {
+    if (routeId) return;
+    (async () => {
+      try {
+        const res = await api.get(`/rab/company-template`);
+        const t = res.data || {};
+        if (t && (t.companyName || t.signatureImage)) {
+          setHasTemplate(true);
+          setRab((r) => ({
+            ...r,
+            companyName: t.companyName || r.companyName,
+            companyAddress: t.companyAddress || r.companyAddress,
+            companyPhone: t.companyPhone || r.companyPhone,
+            bankName: t.bankName || r.bankName,
+            bankAccount: t.bankAccount || r.bankAccount,
+            bankHolder: t.bankHolder || r.bankHolder,
+            signerLeft: t.signerLeft || r.signerLeft,
+            signerRight: t.signerRight || r.signerRight,
+            signatureImage: t.signatureImage || r.signatureImage,
+          }));
+          setShowCompany(true);
+        }
+      } catch {
+        /* no template yet */
+      }
+    })();
+  }, [routeId]);
 
   useEffect(() => {
     if (!routeId) return;
@@ -116,6 +148,58 @@ export default function RabBuilder() {
   const removeTermin = (i) => patchRab({ termins: rab.termins.filter((_, j) => j !== i) });
 
   const toggleCollapse = (id) => setCollapsed((c) => ({ ...c, [id]: !c[id] }));
+
+  // ---- signature & company template ----
+  const onSignatureFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const dataUrl = await fileToSignature(file);
+      patchRab({ signatureImage: dataUrl });
+      toast.success("Tanda tangan diunggah");
+    } catch (err) {
+      toast.error(err.message || "Gagal mengunggah gambar");
+    }
+  };
+
+  const saveTemplate = async () => {
+    setTplSaving(true);
+    try {
+      await api.put(`/rab/company-template`, {
+        companyName: rab.companyName, companyAddress: rab.companyAddress, companyPhone: rab.companyPhone,
+        bankName: rab.bankName, bankAccount: rab.bankAccount, bankHolder: rab.bankHolder,
+        signerLeft: rab.signerLeft, signerRight: rab.signerRight, signatureImage: rab.signatureImage,
+      });
+      setHasTemplate(true);
+      toast.success("Template perusahaan disimpan");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Gagal menyimpan template");
+    } finally {
+      setTplSaving(false);
+    }
+  };
+
+  const loadTemplate = async () => {
+    try {
+      const res = await api.get(`/rab/company-template`);
+      const t = res.data || {};
+      if (!t || (!t.companyName && !t.signatureImage)) {
+        toast.error("Belum ada template tersimpan");
+        return;
+      }
+      patchRab({
+        companyName: t.companyName || "", companyAddress: t.companyAddress || "", companyPhone: t.companyPhone || "",
+        bankName: t.bankName || "", bankAccount: t.bankAccount || "", bankHolder: t.bankHolder || "",
+        signerLeft: t.signerLeft || "", signerRight: t.signerRight || "", signatureImage: t.signatureImage || "",
+      });
+      setHasTemplate(true);
+      setShowCompany(true);
+      toast.success("Template dimuat");
+    } catch {
+      toast.error("Gagal memuat template");
+    }
+  };
 
   // ---- persistence ----
   const save = async () => {
@@ -253,12 +337,22 @@ export default function RabBuilder() {
           </div>
 
           {/* Company profile collapsible */}
-          <button onClick={() => setShowCompany((v) => !v)} className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-amber-700 hover:text-amber-800">
-            {showCompany ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Header Perusahaan (untuk PDF)
-          </button>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button onClick={() => setShowCompany((v) => !v)} className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-700 hover:text-amber-800">
+              {showCompany ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Header Perusahaan & Tanda Tangan (untuk PDF)
+            </button>
+            <div className="flex items-center gap-2 ml-auto">
+              <Button data-testid="rab-load-template" type="button" size="sm" variant="ghost" onClick={loadTemplate} className="h-8 gap-1.5 text-slate-600 hover:bg-slate-100">
+                <FolderInput className="w-3.5 h-3.5" /> Muat Template
+              </Button>
+              <Button data-testid="rab-save-template" type="button" size="sm" variant="outline" onClick={saveTemplate} disabled={tplSaving} className="h-8 gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50">
+                {tplSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BookmarkPlus className="w-3.5 h-3.5" />} Simpan sbg Template
+              </Button>
+            </div>
+          </div>
           {showCompany && (
             <div className="grid sm:grid-cols-2 gap-4 mt-3 p-4 rounded-lg bg-slate-50 border border-slate-100">
-              <Field label="Nama Perusahaan"><Input value={rab.companyName} onChange={(e) => patchRab({ companyName: e.target.value })} /></Field>
+              <Field label="Nama Perusahaan"><Input data-testid="rab-company-name" value={rab.companyName} onChange={(e) => patchRab({ companyName: e.target.value })} placeholder="mis. Furniture Interior Design" /></Field>
               <Field label="Telepon Perusahaan"><Input value={rab.companyPhone} onChange={(e) => patchRab({ companyPhone: e.target.value })} /></Field>
               <Field label="Alamat Perusahaan" full><Input value={rab.companyAddress} onChange={(e) => patchRab({ companyAddress: e.target.value })} /></Field>
               <Field label="Bank"><Input value={rab.bankName} onChange={(e) => patchRab({ bankName: e.target.value })} placeholder="BCA" /></Field>
@@ -266,6 +360,32 @@ export default function RabBuilder() {
               <Field label="Atas Nama"><Input value={rab.bankHolder} onChange={(e) => patchRab({ bankHolder: e.target.value })} /></Field>
               <Field label="Penanda Tangan (Kami)"><Input value={rab.signerLeft} onChange={(e) => patchRab({ signerLeft: e.target.value })} /></Field>
               <Field label="Penanda Tangan (Klien)"><Input value={rab.signerRight} onChange={(e) => patchRab({ signerRight: e.target.value })} /></Field>
+
+              {/* Signature upload */}
+              <div className="sm:col-span-2">
+                <Label className="text-[11px] text-slate-500 mb-1 block">Tanda Tangan Pembuat (JPG/PNG)</Label>
+                <div className="flex items-center gap-4 p-3 rounded-lg border border-dashed border-slate-300 bg-white">
+                  <div className="w-40 h-20 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
+                    {rab.signatureImage ? (
+                      <img data-testid="rab-signature-preview" src={rab.signatureImage} alt="Tanda tangan" className="max-w-full max-h-full object-contain" />
+                    ) : (
+                      <div className="flex flex-col items-center text-slate-300"><ImageIcon className="w-6 h-6" /><span className="text-[10px] mt-1">Belum ada</span></div>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-700 hover:text-amber-800 cursor-pointer">
+                      <Upload className="w-4 h-4" /> Unggah Tanda Tangan
+                      <input data-testid="rab-signature-input" type="file" accept="image/png,image/jpeg" onChange={onSignatureFile} className="hidden" />
+                    </label>
+                    {rab.signatureImage && (
+                      <button type="button" onClick={() => patchRab({ signatureImage: "" })} className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-red-500">
+                        <Trash2 className="w-3.5 h-3.5" /> Hapus
+                      </button>
+                    )}
+                    <p className="text-[11px] text-slate-400 max-w-xs">Tanda tangan akan muncul di atas nama pembuat pada PDF. Simpan sebagai template agar otomatis terpakai.</p>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </Card>

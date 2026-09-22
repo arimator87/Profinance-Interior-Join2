@@ -256,6 +256,7 @@ class RabDoc(BaseModel):
     bankHolder: str = ""
     signerLeft: str = ""
     signerRight: str = ""
+    signatureImage: str = ""
     notes: str = ""
     discount: int = 0
     ppnEnabled: bool = False
@@ -268,6 +269,18 @@ class RabCreateIn(BaseModel):
     projectName: str
     category: str = "Residensial"
     rab: RabDoc
+
+
+class CompanyTemplateIn(BaseModel):
+    companyName: str = ""
+    companyAddress: str = ""
+    companyPhone: str = ""
+    bankName: str = ""
+    bankAccount: str = ""
+    bankHolder: str = ""
+    signerLeft: str = ""
+    signerRight: str = ""
+    signatureImage: str = ""
 
 
 # ---------- Finance calc ----------
@@ -1546,9 +1559,29 @@ async def reset_portal_link(project_id: str, user: dict = Depends(get_current_us
 
 
 # ---------- RAB Builder / Surat Penawaran (Premium) ----------
+@api.get("/rab/company-template")
+async def get_company_template(user: dict = Depends(require_premium)):
+    tpl = await db.rab_templates.find_one({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    return tpl or {}
+
+
+@api.put("/rab/company-template")
+async def save_company_template(body: CompanyTemplateIn, user: dict = Depends(require_premium)):
+    data = body.model_dump()
+    # Guard against oversized signature payloads (base64 data URI)
+    if data.get("signatureImage") and len(data["signatureImage"]) > 3_000_000:
+        raise HTTPException(status_code=400, detail="Gambar tanda tangan terlalu besar (maks ~2MB)")
+    data["user_id"] = user["user_id"]
+    data["updatedAt"] = now_iso()
+    await db.rab_templates.update_one({"user_id": user["user_id"]}, {"$set": data}, upsert=True)
+    return {"ok": True, **{k: v for k, v in data.items() if k not in ("user_id",)}}
+
+
 @api.post("/rab")
 async def create_rab(body: RabCreateIn, user: dict = Depends(require_premium)):
     rab = body.rab.model_dump()
+    if rab.get("signatureImage") and len(rab["signatureImage"]) > 3_000_000:
+        raise HTTPException(status_code=400, detail="Gambar tanda tangan terlalu besar (maks ~2MB)")
     comp = compute_rab(rab)
     pid = str(uuid.uuid4())
     doc = {
@@ -1582,6 +1615,8 @@ async def get_rab(project_id: str, user: dict = Depends(require_premium)):
 async def update_rab(project_id: str, body: RabCreateIn, user: dict = Depends(require_premium)):
     p = await get_owned_project(project_id, user)
     rab = body.rab.model_dump()
+    if rab.get("signatureImage") and len(rab["signatureImage"]) > 3_000_000:
+        raise HTTPException(status_code=400, detail="Gambar tanda tangan terlalu besar (maks ~2MB)")
     comp = compute_rab(rab)
     updates = {
         "rab": rab, "name": body.projectName, "category": body.category,
