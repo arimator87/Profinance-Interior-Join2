@@ -765,6 +765,10 @@ DEFAULT_SETTINGS = {
     "promoActive": False,
     "promoEndsAt": "",
     "announcementTheme": "info",
+    "blogAutoEnabled": False,
+    "blogAutoIntervalHours": 72,
+    "blogLastAutoAt": "",
+    "blogAutoIndex": 0,
 }
 
 
@@ -781,6 +785,8 @@ class SettingsIn(BaseModel):
     yearlyPromo: Optional[int] = None
     promoActive: Optional[bool] = None
     promoEndsAt: Optional[str] = None
+    blogAutoEnabled: Optional[bool] = None
+    blogAutoIntervalHours: Optional[int] = None
 
 
 async def require_admin(user: dict = Depends(get_current_user)):
@@ -2611,6 +2617,10 @@ async def seed_demo(user: dict = Depends(get_current_user)):
 
 app.include_router(api)
 
+# Blog / Artikel module (SEO organic content + AI generation)
+from articles import router as article_router, ensure_indexes as _ensure_article_indexes, start_scheduler as _start_article_scheduler  # noqa: E402
+app.include_router(article_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -2641,6 +2651,14 @@ async def startup():
         await _seed_work_categories()
     except Exception as e:
         logger.error(f"Work categories seed failed: {e}")
+    try:
+        await _ensure_article_indexes()
+    except Exception as e:
+        logger.error(f"Article index init failed: {e}")
+    try:
+        _start_article_scheduler()
+    except Exception as e:
+        logger.error(f"Article scheduler start failed: {e}")
 
 
 @app.on_event("shutdown")

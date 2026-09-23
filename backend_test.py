@@ -1,463 +1,604 @@
 #!/usr/bin/env python3
 """
-Backend test for ProFinance Interior - Retention from Contract Value & Overdue Tracking
-Tests the NEW retention calculation (from nominal) and overdue invoice tracking in billing-recap.
+Backend test suite for ProFinance Interior Blog/Artikel feature.
+Tests all blog endpoints: public, admin CRUD, AI generation, SSR, sitemap, cron.
 """
-import requests
+import os
+import sys
+import time
 import json
-from datetime import datetime, timedelta
+import httpx
+from datetime import datetime
 
-# Base URL for the API
-BASE_URL = "https://profinance-interior-3.preview.emergentagent.com/api"
+# Base URL for backend API
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8001/api")
 
-# Test credentials (premium account)
-EMAIL = "furnitrue.mail@gmail.com"
-PASSWORD = "Password123"
+# Admin credentials (owner email = auto admin + premium)
+ADMIN_EMAIL = "furniture.mail@gmail.com"
+ADMIN_PASSWORD = "Admin12345"
 
-# Global token storage
-token = None
-test_project_id = None
-test_invoices = []
+# CRON secret from backend/.env
+CRON_SECRET = os.environ.get("WEBHOOK_CRON_SECRET", "pf_cron_9x2Kv7Qr4mB1nZ6sL0aWd3Ht8Yc5Ep")
 
-
-def log(msg):
-    """Print timestamped log message."""
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
-
-
-def login():
-    """Login and get bearer token."""
-    global token
-    log("=== LOGIN ===")
-    resp = requests.post(f"{BASE_URL}/auth/login", json={"email": EMAIL, "password": PASSWORD})
-    assert resp.status_code == 200, f"Login failed: {resp.status_code} {resp.text}"
-    data = resp.json()
-    token = data.get("token")
-    assert token, "No token in login response"
-    log(f"✓ Login successful, token: {token[:20]}...")
-    return token
+# Test results tracking
+test_results = []
+admin_token = None
+test_article_id = None
+test_article_slug = None
+ai_article_id = None
+ai_article_slug = None
+ai_cover_url = None
 
 
-def headers():
-    """Return authorization headers."""
-    return {"Authorization": f"Bearer {token}"}
+def log_test(name, passed, details=""):
+    """Log test result."""
+    status = "✅ PASS" if passed else "❌ FAIL"
+    test_results.append({"name": name, "passed": passed, "details": details})
+    print(f"{status}: {name}")
+    if details:
+        print(f"  Details: {details}")
 
 
-def create_test_project():
-    """Create a controlled test project with known nominal."""
-    global test_project_id
-    log("\n=== CREATE TEST PROJECT ===")
-    
-    project_data = {
-        "name": "Uji Retensi",
-        "nominal": 100000000,  # 100 million - known contract value
-        "category": "Residensial",
-        "owner": "Bpk Uji"
-    }
-    
-    resp = requests.post(f"{BASE_URL}/projects", json=project_data, headers=headers())
-    assert resp.status_code == 200, f"Create project failed: {resp.status_code} {resp.text}"
-    
-    data = resp.json()
-    test_project_id = data.get("id")
-    assert test_project_id, "No project id in response"
-    
-    log(f"✓ Created test project: {test_project_id}")
-    log(f"  Name: {data.get('name')}")
-    log(f"  Nominal (Contract Value): Rp {data.get('nominal'):,}")
-    
-    # Verify the nominal is stored correctly
-    resp = requests.get(f"{BASE_URL}/projects/{test_project_id}", headers=headers())
-    assert resp.status_code == 200, f"Get project failed: {resp.status_code}"
-    project = resp.json()
-    actual_nominal = project.get("nominal")
-    log(f"  Verified nominal from GET: Rp {actual_nominal:,}")
-    assert actual_nominal == 100000000, f"Nominal mismatch: expected 100000000, got {actual_nominal}"
-    
-    return test_project_id, actual_nominal
-
-
-def test_retention_from_contract_value(project_id, nominal):
-    """
-    Test (A): Retention calculation from contract value (nominal), NOT from invoice subtotal.
-    """
-    log("\n=== TEST (A): RETENTION FROM CONTRACT VALUE ===")
-    
-    # Test 1: Create final invoice with retention 5%
-    log("\n--- Test A.1: Create invoice with 5% retention ---")
-    invoice_data = {
-        "type": "final",
-        "number": "RET/001",
-        "status": "Terkirim",
-        "clientName": "Bpk Uji",
-        "clientAddress": "Jakarta",
-        "clientPhone": "08123456789",
-        "items": [
-            {
-                "description": "Pelunasan",
-                "qty": 1,
-                "unitPrice": 20000000  # 20 million subtotal
-            }
-        ],
-        "ppnEnabled": True,
-        "ppnPercent": 11,
-        "retentionEnabled": True,
-        "retentionPercent": 5,
-        "companyName": "CV Test",
-        "bankName": "BCA",
-        "bankAccount": "1234567890",
-        "bankHolder": "CV Test"
-    }
-    
-    resp = requests.post(f"{BASE_URL}/projects/{project_id}/invoices", json=invoice_data, headers=headers())
-    assert resp.status_code == 200, f"Create invoice failed: {resp.status_code} {resp.text}"
-    
-    invoice = resp.json()
-    invoice_id = invoice.get("id")
-    test_invoices.append(invoice_id)
-    
-    log(f"✓ Created invoice: {invoice.get('number')} (id: {invoice_id})")
-    
-    # Verify computed values
-    computed = invoice.get("computed", {})
-    subtotal = computed.get("subtotal")
-    ppn_amount = computed.get("ppnAmount")
-    gross_total = computed.get("grossTotal")
-    retention_amount = computed.get("retentionAmount")
-    retention_base = computed.get("retentionBase")
-    amount_due = computed.get("amountDue")
-    
-    log(f"  Subtotal: Rp {subtotal:,}")
-    log(f"  PPN (11%): Rp {ppn_amount:,}")
-    log(f"  Gross Total: Rp {gross_total:,}")
-    log(f"  Retention Base: Rp {retention_base:,}")
-    log(f"  Retention Amount (5%): Rp {retention_amount:,}")
-    log(f"  Amount Due: Rp {amount_due:,}")
-    
-    # CRITICAL VERIFICATION: Retention should be from NOMINAL (100M), NOT subtotal (20M)
-    expected_retention = round(nominal * 5 / 100)  # 5% of 100M = 5M
-    wrong_retention = round(subtotal * 5 / 100)    # 5% of 20M = 1M (OLD WAY)
-    
-    assert subtotal == 20000000, f"Subtotal mismatch: expected 20000000, got {subtotal}"
-    assert ppn_amount == 2200000, f"PPN mismatch: expected 2200000 (11% of 20M), got {ppn_amount}"
-    assert gross_total == 22200000, f"Gross total mismatch: expected 22200000, got {gross_total}"
-    
-    log(f"\n  CRITICAL CHECK:")
-    log(f"  Expected retention (5% of nominal 100M): Rp {expected_retention:,}")
-    log(f"  Wrong retention (5% of subtotal 20M): Rp {wrong_retention:,}")
-    log(f"  Actual retention: Rp {retention_amount:,}")
-    
-    assert retention_base == nominal, f"Retention base should be nominal ({nominal}), got {retention_base}"
-    assert retention_amount == expected_retention, f"Retention should be {expected_retention} (5% of nominal), got {retention_amount}"
-    assert retention_amount != wrong_retention, f"Retention should NOT be {wrong_retention} (5% of subtotal)"
-    
-    expected_amount_due = gross_total - expected_retention  # 22.2M - 5M = 17.2M
-    assert amount_due == expected_amount_due, f"Amount due mismatch: expected {expected_amount_due}, got {amount_due}"
-    
-    log(f"  ✓ PASS: Retention correctly calculated from contract value (nominal)")
-    log(f"  ✓ PASS: retentionBase = {retention_base:,} (equals nominal)")
-    log(f"  ✓ PASS: retentionAmount = {retention_amount:,} (5% of nominal)")
-    log(f"  ✓ PASS: amountDue = {amount_due:,} (gross - retention)")
-    
-    # Test 2: GET invoice and verify retention persists
-    log("\n--- Test A.2: GET invoice and verify retention ---")
-    resp = requests.get(f"{BASE_URL}/invoices/{invoice_id}", headers=headers())
-    assert resp.status_code == 200, f"Get invoice failed: {resp.status_code}"
-    
-    invoice = resp.json()
-    computed = invoice.get("computed", {})
-    retention_amount_get = computed.get("retentionAmount")
-    retention_base_get = computed.get("retentionBase")
-    
-    log(f"  Retention Amount: Rp {retention_amount_get:,}")
-    log(f"  Retention Base: Rp {retention_base_get:,}")
-    
-    assert retention_amount_get == expected_retention, f"Retention amount mismatch on GET"
-    assert retention_base_get == nominal, f"Retention base mismatch on GET"
-    log(f"  ✓ PASS: Retention values persist correctly")
-    
-    # Test 3: Update retention percent to 10%
-    log("\n--- Test A.3: Update retention percent to 10% ---")
-    invoice_data["retentionPercent"] = 10
-    
-    resp = requests.put(f"{BASE_URL}/invoices/{invoice_id}", json=invoice_data, headers=headers())
-    assert resp.status_code == 200, f"Update invoice failed: {resp.status_code} {resp.text}"
-    
-    invoice = resp.json()
-    computed = invoice.get("computed", {})
-    retention_amount_updated = computed.get("retentionAmount")
-    retention_base_updated = computed.get("retentionBase")
-    amount_due_updated = computed.get("amountDue")
-    
-    expected_retention_10 = round(nominal * 10 / 100)  # 10% of 100M = 10M
-    expected_amount_due_10 = gross_total - expected_retention_10  # 22.2M - 10M = 12.2M
-    
-    log(f"  New Retention Amount (10%): Rp {retention_amount_updated:,}")
-    log(f"  Expected: Rp {expected_retention_10:,}")
-    log(f"  Retention Base: Rp {retention_base_updated:,}")
-    log(f"  Amount Due: Rp {amount_due_updated:,}")
-    
-    assert retention_amount_updated == expected_retention_10, f"Updated retention mismatch: expected {expected_retention_10}, got {retention_amount_updated}"
-    assert retention_base_updated == nominal, f"Retention base should still be nominal"
-    assert amount_due_updated == expected_amount_due_10, f"Updated amount due mismatch"
-    
-    log(f"  ✓ PASS: Retention recalculated correctly to 10% of nominal")
-    log(f"  ✓ PASS: retentionAmount = {retention_amount_updated:,}")
-    log(f"  ✓ PASS: amountDue = {amount_due_updated:,}")
-    
-    # Test 4: Invoice PDF generation
-    log("\n--- Test A.4: Invoice PDF generation ---")
-    resp = requests.get(f"{BASE_URL}/invoices/{invoice_id}/pdf?auth={token}", headers=headers())
-    assert resp.status_code == 200, f"PDF generation failed: {resp.status_code}"
-    assert resp.headers.get("Content-Type") == "application/pdf", f"Wrong content type: {resp.headers.get('Content-Type')}"
-    
-    pdf_bytes = resp.content
-    assert pdf_bytes[:4] == b"%PDF", "PDF does not start with %PDF magic bytes"
-    
-    log(f"  ✓ PASS: PDF generated successfully ({len(pdf_bytes)} bytes)")
-    
-    # Try to verify "dari Nilai Kontrak" text in PDF (if pymupdf available)
+def test_a_public_blog_list():
+    """(A) GET /api/blog (no auth) -> 200 with keys items,total,page,pages."""
     try:
-        import fitz  # pymupdf
-        pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        text = ""
-        for page in pdf_doc:
-            text += page.get_text()
-        pdf_doc.close()
-        
-        if "dari Nilai Kontrak" in text or "Nilai Kontrak" in text:
-            log(f"  ✓ PASS: PDF contains 'dari Nilai Kontrak' text")
-        else:
-            log(f"  ⚠ WARNING: Could not find 'dari Nilai Kontrak' in PDF text")
-            log(f"    (This may be a formatting issue, not a critical failure)")
-    except ImportError:
-        log(f"  ⚠ pymupdf not available, skipping PDF text verification")
+        with httpx.Client(timeout=30) as client:
+            r = client.get(f"{BACKEND_URL}/blog")
+            if r.status_code != 200:
+                log_test("A. Public blog list", False, f"Expected 200, got {r.status_code}")
+                return False
+            data = r.json()
+            required_keys = ["items", "total", "page", "pages"]
+            missing = [k for k in required_keys if k not in data]
+            if missing:
+                log_test("A. Public blog list", False, f"Missing keys: {missing}")
+                return False
+            log_test("A. Public blog list", True, f"Got {data['total']} articles, page {data['page']}/{data['pages']}")
+            return True
     except Exception as e:
-        log(f"  ⚠ PDF text extraction failed: {e}")
-    
-    return invoice_id
+        log_test("A. Public blog list", False, f"Exception: {e}")
+        return False
 
 
-def test_overdue_tracking(project_id):
-    """
-    Test (B): Overdue invoice tracking in billing-recap endpoint.
-    """
-    log("\n=== TEST (B): OVERDUE INVOICE TRACKING ===")
-    
-    # Create test invoices with different due dates and statuses
-    today = datetime.now().date()
-    past_date = (today - timedelta(days=365)).isoformat()  # 2024-01-01 equivalent
-    future_date = "2099-12-31"
-    
-    log(f"\n  Today: {today.isoformat()}")
-    log(f"  Past date: {past_date}")
-    log(f"  Future date: {future_date}")
-    
-    # Invoice X: Terkirim, past due date (SHOULD BE OVERDUE)
-    log("\n--- Test B.1: Create Invoice X (Terkirim, past due date) ---")
-    invoice_x_data = {
-        "type": "final",
-        "number": "INV-X/001",
-        "status": "Terkirim",
-        "dueDate": past_date,
-        "clientName": "Klien X",
-        "clientAddress": "Jakarta",
-        "clientPhone": "08123456789",
-        "items": [{"description": "Item X", "qty": 1, "unitPrice": 3000000}],
-        "ppnEnabled": False,
-        "retentionEnabled": False,
-        "companyName": "CV Test",
-        "bankName": "BCA",
-        "bankAccount": "1234567890",
-        "bankHolder": "CV Test"
-    }
-    
-    resp = requests.post(f"{BASE_URL}/projects/{project_id}/invoices", json=invoice_x_data, headers=headers())
-    assert resp.status_code == 200, f"Create invoice X failed: {resp.status_code} {resp.text}"
-    invoice_x = resp.json()
-    invoice_x_id = invoice_x.get("id")
-    test_invoices.append(invoice_x_id)
-    log(f"  ✓ Created Invoice X: {invoice_x.get('number')} (id: {invoice_x_id})")
-    log(f"    Status: {invoice_x.get('status')}, Due: {invoice_x.get('dueDate')}")
-    log(f"    Amount Due: Rp {invoice_x.get('computed', {}).get('amountDue'):,}")
-    
-    # Invoice Y: Terkirim, future due date (NOT OVERDUE)
-    log("\n--- Test B.2: Create Invoice Y (Terkirim, future due date) ---")
-    invoice_y_data = {
-        "type": "final",
-        "number": "INV-Y/001",
-        "status": "Terkirim",
-        "dueDate": future_date,
-        "clientName": "Klien Y",
-        "clientAddress": "Jakarta",
-        "clientPhone": "08123456789",
-        "items": [{"description": "Item Y", "qty": 1, "unitPrice": 4000000}],
-        "ppnEnabled": False,
-        "retentionEnabled": False,
-        "companyName": "CV Test",
-        "bankName": "BCA",
-        "bankAccount": "1234567890",
-        "bankHolder": "CV Test"
-    }
-    
-    resp = requests.post(f"{BASE_URL}/projects/{project_id}/invoices", json=invoice_y_data, headers=headers())
-    assert resp.status_code == 200, f"Create invoice Y failed: {resp.status_code} {resp.text}"
-    invoice_y = resp.json()
-    invoice_y_id = invoice_y.get("id")
-    test_invoices.append(invoice_y_id)
-    log(f"  ✓ Created Invoice Y: {invoice_y.get('number')} (id: {invoice_y_id})")
-    log(f"    Status: {invoice_y.get('status')}, Due: {invoice_y.get('dueDate')}")
-    log(f"    Amount Due: Rp {invoice_y.get('computed', {}).get('amountDue'):,}")
-    
-    # Invoice Z: Lunas, past due date (NOT OVERDUE - already paid)
-    log("\n--- Test B.3: Create Invoice Z (Lunas, past due date) ---")
-    invoice_z_data = {
-        "type": "final",
-        "number": "INV-Z/001",
-        "status": "Lunas",
-        "dueDate": past_date,
-        "clientName": "Klien Z",
-        "clientAddress": "Jakarta",
-        "clientPhone": "08123456789",
-        "items": [{"description": "Item Z", "qty": 1, "unitPrice": 2000000}],
-        "ppnEnabled": False,
-        "retentionEnabled": False,
-        "companyName": "CV Test",
-        "bankName": "BCA",
-        "bankAccount": "1234567890",
-        "bankHolder": "CV Test"
-    }
-    
-    resp = requests.post(f"{BASE_URL}/projects/{project_id}/invoices", json=invoice_z_data, headers=headers())
-    assert resp.status_code == 200, f"Create invoice Z failed: {resp.status_code} {resp.text}"
-    invoice_z = resp.json()
-    invoice_z_id = invoice_z.get("id")
-    test_invoices.append(invoice_z_id)
-    log(f"  ✓ Created Invoice Z: {invoice_z.get('number')} (id: {invoice_z_id})")
-    log(f"    Status: {invoice_z.get('status')}, Due: {invoice_z.get('dueDate')}")
-    log(f"    Amount Due: Rp {invoice_z.get('computed', {}).get('amountDue'):,}")
-    
-    # Test billing-recap endpoint
-    log("\n--- Test B.4: GET billing-recap and verify overdue tracking ---")
-    resp = requests.get(f"{BASE_URL}/projects/{project_id}/billing-recap", headers=headers())
-    assert resp.status_code == 200, f"Billing recap failed: {resp.status_code} {resp.text}"
-    
-    recap = resp.json()
-    
-    log(f"\n  Billing Recap Response:")
-    log(f"  - nominal: Rp {recap.get('nominal', 0):,}")
-    log(f"  - totalBilled: Rp {recap.get('totalBilled', 0):,}")
-    log(f"  - draftAmount: Rp {recap.get('draftAmount', 0):,}")
-    log(f"  - paid: Rp {recap.get('paid', 0):,}")
-    log(f"  - receivable: Rp {recap.get('receivable', 0):,}")
-    log(f"  - retentionHeld: Rp {recap.get('retentionHeld', 0):,}")
-    log(f"  - invoiceCount: {recap.get('invoiceCount', 0)}")
-    log(f"  - billedCount: {recap.get('billedCount', 0)}")
-    log(f"  - overdueCount: {recap.get('overdueCount', 0)}")
-    log(f"  - overdueAmount: Rp {recap.get('overdueAmount', 0):,}")
-    
-    # Verify overdue fields exist
-    assert "overdueCount" in recap, "overdueCount field missing in billing-recap"
-    assert "overdueAmount" in recap, "overdueAmount field missing in billing-recap"
-    
-    overdue_count = recap.get("overdueCount")
-    overdue_amount = recap.get("overdueAmount")
-    
-    log(f"\n  CRITICAL CHECK:")
-    log(f"  Expected overdueCount: 1 (only Invoice X)")
-    log(f"  Actual overdueCount: {overdue_count}")
-    log(f"  Expected overdueAmount: Rp 3,000,000 (Invoice X amount)")
-    log(f"  Actual overdueAmount: Rp {overdue_amount:,}")
-    
-    # Verify overdue logic:
-    # - Invoice X: Terkirim + past due = OVERDUE ✓
-    # - Invoice Y: Terkirim + future due = NOT overdue
-    # - Invoice Z: Lunas + past due = NOT overdue (already paid)
-    # - Invoice RET/001: no dueDate = NOT overdue
-    
-    assert overdue_count == 1, f"Expected overdueCount=1 (only Invoice X), got {overdue_count}"
-    assert overdue_amount == 3000000, f"Expected overdueAmount=3000000 (Invoice X), got {overdue_amount}"
-    
-    log(f"  ✓ PASS: overdueCount = {overdue_count} (correct)")
-    log(f"  ✓ PASS: overdueAmount = Rp {overdue_amount:,} (correct)")
-    
-    # Verify other fields still exist
-    assert "totalBilled" in recap, "totalBilled field missing"
-    assert "draftAmount" in recap, "draftAmount field missing"
-    assert "paid" in recap, "paid field missing"
-    assert "receivable" in recap, "receivable field missing"
-    assert "retentionHeld" in recap, "retentionHeld field missing"
-    assert "invoiceCount" in recap, "invoiceCount field missing"
-    assert "billedCount" in recap, "billedCount field missing"
-    
-    log(f"  ✓ PASS: All legacy fields present in billing-recap")
+def test_b1_admin_login():
+    """Login admin and get token."""
+    global admin_token
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.post(f"{BACKEND_URL}/auth/login", json={
+                "email": ADMIN_EMAIL,
+                "password": ADMIN_PASSWORD
+            })
+            if r.status_code != 200:
+                log_test("B1. Admin login", False, f"Expected 200, got {r.status_code}: {r.text[:200]}")
+                return False
+            data = r.json()
+            admin_token = data.get("token")
+            if not admin_token:
+                log_test("B1. Admin login", False, "No token in response")
+                return False
+            log_test("B1. Admin login", True, f"Token: {admin_token[:20]}...")
+            return True
+    except Exception as e:
+        log_test("B1. Admin login", False, f"Exception: {e}")
+        return False
 
 
-def cleanup():
-    """Delete all test invoices and project."""
-    log("\n=== CLEANUP ===")
+def test_b2_admin_create_article():
+    """(B1) POST /api/admin/articles with manual content."""
+    global test_article_id, test_article_slug
+    if not admin_token:
+        log_test("B2. Admin create article", False, "No admin token")
+        return False
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.post(f"{BACKEND_URL}/admin/articles", json={
+                "title": "Panduan Uji",
+                "excerpt": "ringkas",
+                "content_md": "## Judul\nIsi **tebal**\n- a\n- b",
+                "category": "panduan",
+                "tags": ["uji"],
+                "status": "published"
+            }, headers={"Authorization": f"Bearer {admin_token}"})
+            
+            if r.status_code != 200:
+                log_test("B2. Admin create article", False, f"Expected 200, got {r.status_code}: {r.text[:200]}")
+                return False
+            
+            data = r.json()
+            test_article_id = data.get("id")
+            test_article_slug = data.get("slug")
+            
+            # Verify response structure
+            checks = []
+            checks.append(("id", test_article_id is not None))
+            checks.append(("slug", test_article_slug is not None))
+            checks.append(("contentHtml", data.get("contentHtml") and "<h2" in data.get("contentHtml", "")))
+            checks.append(("contentHtml has <strong>", "<strong>" in data.get("contentHtml", "")))
+            checks.append(("status=published", data.get("status") == "published"))
+            checks.append(("publishedAt not null", data.get("publishedAt") is not None))
+            
+            failed = [name for name, result in checks if not result]
+            if failed:
+                log_test("B2. Admin create article", False, f"Failed checks: {failed}")
+                return False
+            
+            log_test("B2. Admin create article", True, f"Created article id={test_article_id}, slug={test_article_slug}")
+            return True
+    except Exception as e:
+        log_test("B2. Admin create article", False, f"Exception: {e}")
+        return False
+
+
+def test_b3_admin_list_articles():
+    """(B2) GET /api/admin/articles -> 200, list contains the created article."""
+    if not admin_token or not test_article_id:
+        log_test("B3. Admin list articles", False, "Missing admin token or test article")
+        return False
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.get(f"{BACKEND_URL}/admin/articles", headers={"Authorization": f"Bearer {admin_token}"})
+            if r.status_code != 200:
+                log_test("B3. Admin list articles", False, f"Expected 200, got {r.status_code}")
+                return False
+            data = r.json()
+            items = data.get("items", [])
+            found = any(a.get("id") == test_article_id for a in items)
+            if not found:
+                log_test("B3. Admin list articles", False, f"Test article {test_article_id} not found in list")
+                return False
+            log_test("B3. Admin list articles", True, f"Found test article in list of {len(items)} articles")
+            return True
+    except Exception as e:
+        log_test("B3. Admin list articles", False, f"Exception: {e}")
+        return False
+
+
+def test_b4_admin_get_article():
+    """(B3) GET /api/admin/articles/{id} -> 200 full with contentMd and seoTitle."""
+    if not admin_token or not test_article_id:
+        log_test("B4. Admin get article", False, "Missing admin token or test article")
+        return False
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.get(f"{BACKEND_URL}/admin/articles/{test_article_id}", 
+                          headers={"Authorization": f"Bearer {admin_token}"})
+            if r.status_code != 200:
+                log_test("B4. Admin get article", False, f"Expected 200, got {r.status_code}")
+                return False
+            data = r.json()
+            checks = []
+            checks.append(("contentMd", data.get("contentMd") is not None))
+            checks.append(("seoTitle", data.get("seoTitle") is not None))
+            checks.append(("contentHtml", data.get("contentHtml") is not None))
+            
+            failed = [name for name, result in checks if not result]
+            if failed:
+                log_test("B4. Admin get article", False, f"Missing fields: {failed}")
+                return False
+            log_test("B4. Admin get article", True, f"Got full article with contentMd and seoTitle")
+            return True
+    except Exception as e:
+        log_test("B4. Admin get article", False, f"Exception: {e}")
+        return False
+
+
+def test_b5_admin_update_article():
+    """(B4) PUT /api/admin/articles/{id} changing title to 'Panduan Uji Edit', status published -> 200."""
+    global test_article_slug
+    if not admin_token or not test_article_id:
+        log_test("B5. Admin update article", False, "Missing admin token or test article")
+        return False
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.put(f"{BACKEND_URL}/admin/articles/{test_article_id}", json={
+                "title": "Panduan Uji Edit",
+                "excerpt": "ringkas",
+                "content_md": "## Judul\nIsi **tebal**\n- a\n- b",
+                "category": "panduan",
+                "tags": ["uji"],
+                "status": "published"
+            }, headers={"Authorization": f"Bearer {admin_token}"})
+            
+            if r.status_code != 200:
+                log_test("B5. Admin update article", False, f"Expected 200, got {r.status_code}: {r.text[:200]}")
+                return False
+            
+            data = r.json()
+            # Slug may change due to title change
+            test_article_slug = data.get("slug")
+            
+            if data.get("title") != "Panduan Uji Edit":
+                log_test("B5. Admin update article", False, f"Title not updated: {data.get('title')}")
+                return False
+            
+            log_test("B5. Admin update article", True, f"Updated title, new slug={test_article_slug}")
+            return True
+    except Exception as e:
+        log_test("B5. Admin update article", False, f"Exception: {e}")
+        return False
+
+
+def test_b6_public_get_article_and_views():
+    """(B5) GET /api/blog/{slug} (no auth) -> 200 {article, related}, and views increments on repeat call."""
+    if not test_article_slug:
+        log_test("B6. Public get article + views", False, "No test article slug")
+        return False
+    try:
+        with httpx.Client(timeout=30) as client:
+            # First call
+            r1 = client.get(f"{BACKEND_URL}/blog/{test_article_slug}")
+            if r1.status_code != 200:
+                log_test("B6. Public get article + views", False, f"Expected 200, got {r1.status_code}")
+                return False
+            
+            data1 = r1.json()
+            if "article" not in data1 or "related" not in data1:
+                log_test("B6. Public get article + views", False, "Missing article or related keys")
+                return False
+            
+            views1 = data1["article"].get("views", 0)
+            
+            # Second call to increment views
+            time.sleep(0.5)
+            r2 = client.get(f"{BACKEND_URL}/blog/{test_article_slug}")
+            if r2.status_code != 200:
+                log_test("B6. Public get article + views", False, f"Second call failed: {r2.status_code}")
+                return False
+            
+            data2 = r2.json()
+            views2 = data2["article"].get("views", 0)
+            
+            if views2 <= views1:
+                log_test("B6. Public get article + views", False, f"Views did not increment: {views1} -> {views2}")
+                return False
+            
+            log_test("B6. Public get article + views", True, f"Views incremented: {views1} -> {views2}")
+            return True
+    except Exception as e:
+        log_test("B6. Public get article + views", False, f"Exception: {e}")
+        return False
+
+
+def test_b7_public_filter_by_category():
+    """(B6) GET /api/blog?category=panduan -> contains the article."""
+    if not test_article_id:
+        log_test("B7. Public filter by category", False, "No test article")
+        return False
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.get(f"{BACKEND_URL}/blog?category=panduan")
+            if r.status_code != 200:
+                log_test("B7. Public filter by category", False, f"Expected 200, got {r.status_code}")
+                return False
+            
+            data = r.json()
+            items = data.get("items", [])
+            found = any(a.get("id") == test_article_id for a in items)
+            
+            if not found:
+                log_test("B7. Public filter by category", False, f"Test article not found in category=panduan")
+                return False
+            
+            log_test("B7. Public filter by category", True, f"Found article in category filter")
+            return True
+    except Exception as e:
+        log_test("B7. Public filter by category", False, f"Exception: {e}")
+        return False
+
+
+def test_c1_ssr_html():
+    """(C) SSR: GET /api/a/{slug} (no auth) -> 200 text/html containing og:title, og:image, application/ld+json, and canonical."""
+    if not test_article_slug:
+        log_test("C1. SSR HTML", False, "No test article slug")
+        return False
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.get(f"{BACKEND_URL}/a/{test_article_slug}")
+            if r.status_code != 200:
+                log_test("C1. SSR HTML", False, f"Expected 200, got {r.status_code}")
+                return False
+            
+            if "text/html" not in r.headers.get("content-type", ""):
+                log_test("C1. SSR HTML", False, f"Expected text/html, got {r.headers.get('content-type')}")
+                return False
+            
+            html = r.text
+            checks = []
+            checks.append(("og:title", "og:title" in html))
+            checks.append(("og:image", "og:image" in html))
+            checks.append(("application/ld+json", "application/ld+json" in html))
+            checks.append(("canonical", f"/blog/{test_article_slug}" in html))
+            
+            failed = [name for name, result in checks if not result]
+            if failed:
+                log_test("C1. SSR HTML", False, f"Missing elements: {failed}")
+                return False
+            
+            log_test("C1. SSR HTML", True, f"SSR HTML contains all required meta tags")
+            return True
+    except Exception as e:
+        log_test("C1. SSR HTML", False, f"Exception: {e}")
+        return False
+
+
+def test_c2_sitemap():
+    """(C) GET /api/sitemap.xml -> 200 xml containing the slug."""
+    if not test_article_slug:
+        log_test("C2. Sitemap", False, "No test article slug")
+        return False
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.get(f"{BACKEND_URL}/sitemap.xml")
+            if r.status_code != 200:
+                log_test("C2. Sitemap", False, f"Expected 200, got {r.status_code}")
+                return False
+            
+            if "application/xml" not in r.headers.get("content-type", ""):
+                log_test("C2. Sitemap", False, f"Expected xml, got {r.headers.get('content-type')}")
+                return False
+            
+            xml = r.text
+            if test_article_slug not in xml:
+                log_test("C2. Sitemap", False, f"Slug {test_article_slug} not found in sitemap")
+                return False
+            
+            log_test("C2. Sitemap", True, f"Sitemap contains article slug")
+            return True
+    except Exception as e:
+        log_test("C2. Sitemap", False, f"Exception: {e}")
+        return False
+
+
+def test_d_ai_generate():
+    """(D) AI GENERATE (ONCE only): POST /api/admin/articles/generate with generous timeout."""
+    global ai_article_id, ai_article_slug, ai_cover_url
+    if not admin_token:
+        log_test("D. AI generate article", False, "No admin token")
+        return False
     
-    # Delete invoices
-    for invoice_id in test_invoices:
-        try:
-            resp = requests.delete(f"{BASE_URL}/invoices/{invoice_id}", headers=headers())
-            if resp.status_code == 200:
-                log(f"  ✓ Deleted invoice: {invoice_id}")
+    print("\n⏳ AI generation starting (this will take 40-90 seconds)...")
+    try:
+        with httpx.Client(timeout=150) as client:  # 150s timeout for AI generation
+            start_time = time.time()
+            r = client.post(f"{BACKEND_URL}/admin/articles/generate", json={
+                "topic": "Tips memilih lampu untuk ruang keluarga",
+                "category": "interior",
+                "generate_cover": True,
+                "publish": True
+            }, headers={"Authorization": f"Bearer {admin_token}"})
+            
+            elapsed = time.time() - start_time
+            
+            if r.status_code != 200:
+                log_test("D. AI generate article", False, f"Expected 200, got {r.status_code}: {r.text[:300]}")
+                return False
+            
+            data = r.json()
+            ai_article_id = data.get("id")
+            ai_article_slug = data.get("slug")
+            ai_cover_url = data.get("coverUrl")
+            
+            checks = []
+            checks.append(("id", ai_article_id is not None))
+            checks.append(("slug", ai_article_slug is not None))
+            checks.append(("contentHtml non-empty", bool(data.get("contentHtml"))))
+            checks.append(("title non-empty", bool(data.get("title"))))
+            checks.append(("coverUrl starts with /api/blog/media/", 
+                          ai_cover_url and ai_cover_url.startswith("/api/blog/media/")))
+            
+            failed = [name for name, result in checks if not result]
+            if failed:
+                log_test("D. AI generate article", False, f"Failed checks: {failed}")
+                return False
+            
+            log_test("D. AI generate article", True, 
+                    f"Generated in {elapsed:.1f}s, id={ai_article_id}, coverUrl={ai_cover_url}")
+            return True
+    except httpx.TimeoutException:
+        log_test("D. AI generate article", False, "Timeout after 150s")
+        return False
+    except Exception as e:
+        log_test("D. AI generate article", False, f"Exception: {e}")
+        return False
+
+
+def test_d2_ai_cover_image():
+    """(D) GET {backend}{coverUrl} -> 200 with image/* content-type."""
+    if not ai_cover_url:
+        log_test("D2. AI cover image", False, "No AI cover URL")
+        return False
+    try:
+        # coverUrl is relative like /api/blog/media/..., need to construct full URL
+        # Remove /api prefix since BACKEND_URL already has it
+        cover_path = ai_cover_url.replace("/api", "", 1)
+        full_url = f"{BACKEND_URL}{cover_path}"
+        
+        with httpx.Client(timeout=30) as client:
+            r = client.get(full_url)
+            if r.status_code != 200:
+                log_test("D2. AI cover image", False, f"Expected 200, got {r.status_code}")
+                return False
+            
+            content_type = r.headers.get("content-type", "")
+            if not content_type.startswith("image/"):
+                log_test("D2. AI cover image", False, f"Expected image/*, got {content_type}")
+                return False
+            
+            size = len(r.content)
+            log_test("D2. AI cover image", True, f"Got image ({content_type}, {size} bytes)")
+            return True
+    except Exception as e:
+        log_test("D2. AI cover image", False, f"Exception: {e}")
+        return False
+
+
+def test_e_gating_free_user():
+    """(E) GATING: register a NEW free user -> GET/POST /api/admin/articles with free token -> 403."""
+    try:
+        # Register new free user
+        timestamp = int(time.time())
+        free_email = f"test_blog_free_{timestamp}@test.com"
+        
+        with httpx.Client(timeout=30) as client:
+            r = client.post(f"{BACKEND_URL}/auth/register", json={
+                "email": free_email,
+                "name": "Test Blog Free",
+                "password": "Test123456"
+            })
+            
+            if r.status_code != 200:
+                log_test("E. Gating free user", False, f"Register failed: {r.status_code}")
+                return False
+            
+            free_token = r.json().get("token")
+            if not free_token:
+                log_test("E. Gating free user", False, "No token from register")
+                return False
+            
+            # Try GET /api/admin/articles with free token
+            r_get = client.get(f"{BACKEND_URL}/admin/articles", 
+                              headers={"Authorization": f"Bearer {free_token}"})
+            
+            # Try POST /api/admin/articles with free token
+            r_post = client.post(f"{BACKEND_URL}/admin/articles", json={
+                "title": "Test",
+                "content_md": "Test",
+                "status": "draft"
+            }, headers={"Authorization": f"Bearer {free_token}"})
+            
+            checks = []
+            checks.append(("GET returns 403", r_get.status_code == 403))
+            checks.append(("POST returns 403", r_post.status_code == 403))
+            
+            failed = [name for name, result in checks if not result]
+            if failed:
+                log_test("E. Gating free user", False, 
+                        f"Failed: {failed}. GET={r_get.status_code}, POST={r_post.status_code}")
+                return False
+            
+            log_test("E. Gating free user", True, "Free user correctly blocked (403) on admin endpoints")
+            return True
+    except Exception as e:
+        log_test("E. Gating free user", False, f"Exception: {e}")
+        return False
+
+
+def test_f_cron_auth_and_disabled():
+    """(F) CRON: POST /api/cron/generate-article WITHOUT auth -> 401; WITH Bearer {secret} and disabled -> 200 {skipped}."""
+    try:
+        with httpx.Client(timeout=30) as client:
+            # Test without auth
+            r_no_auth = client.post(f"{BACKEND_URL}/cron/generate-article")
+            
+            # Test with correct auth but blogAutoEnabled=false (default)
+            r_with_auth = client.post(f"{BACKEND_URL}/cron/generate-article",
+                                     headers={"Authorization": f"Bearer {CRON_SECRET}"})
+            
+            checks = []
+            checks.append(("No auth returns 401", r_no_auth.status_code == 401))
+            checks.append(("With auth returns 200", r_with_auth.status_code == 200))
+            
+            if r_with_auth.status_code == 200:
+                data = r_with_auth.json()
+                checks.append(("Response has skipped='disabled'", data.get("skipped") == "disabled"))
+            
+            failed = [name for name, result in checks if not result]
+            if failed:
+                log_test("F. Cron auth and disabled", False, 
+                        f"Failed: {failed}. No auth={r_no_auth.status_code}, With auth={r_with_auth.status_code}")
+                return False
+            
+            log_test("F. Cron auth and disabled", True, 
+                    "Cron auth working (401 without, 200 with secret, skipped when disabled)")
+            return True
+    except Exception as e:
+        log_test("F. Cron auth and disabled", False, f"Exception: {e}")
+        return False
+
+
+def cleanup_test_article():
+    """Delete the manual test article."""
+    if not admin_token or not test_article_id:
+        print("\n⚠️  No test article to cleanup")
+        return
+    
+    try:
+        with httpx.Client(timeout=30) as client:
+            r = client.delete(f"{BACKEND_URL}/admin/articles/{test_article_id}",
+                            headers={"Authorization": f"Bearer {admin_token}"})
+            if r.status_code == 200:
+                print(f"\n✅ Cleaned up test article {test_article_id}")
             else:
-                log(f"  ⚠ Failed to delete invoice {invoice_id}: {resp.status_code}")
-        except Exception as e:
-            log(f"  ⚠ Error deleting invoice {invoice_id}: {e}")
+                print(f"\n⚠️  Failed to cleanup test article: {r.status_code}")
+    except Exception as e:
+        print(f"\n⚠️  Cleanup exception: {e}")
+
+
+def print_summary():
+    """Print test summary."""
+    print("\n" + "="*80)
+    print("TEST SUMMARY")
+    print("="*80)
     
-    # Delete project
-    if test_project_id:
-        try:
-            resp = requests.delete(f"{BASE_URL}/projects/{test_project_id}", headers=headers())
-            if resp.status_code == 200:
-                log(f"  ✓ Deleted project: {test_project_id}")
-            else:
-                log(f"  ⚠ Failed to delete project {test_project_id}: {resp.status_code}")
-        except Exception as e:
-            log(f"  ⚠ Error deleting project {test_project_id}: {e}")
+    passed = sum(1 for t in test_results if t["passed"])
+    total = len(test_results)
+    
+    print(f"\nTotal: {passed}/{total} tests passed\n")
+    
+    for t in test_results:
+        status = "✅" if t["passed"] else "❌"
+        print(f"{status} {t['name']}")
+        if not t["passed"] and t["details"]:
+            print(f"   {t['details']}")
+    
+    print("\n" + "="*80)
+    
+    return passed == total
 
 
 def main():
-    """Main test execution."""
-    log("=" * 80)
-    log("BACKEND TEST: Retention from Contract Value & Overdue Tracking")
-    log("ProFinance Interior - FastAPI Backend")
-    log("=" * 80)
+    """Run all tests."""
+    print("="*80)
+    print("ProFinance Interior - Blog/Artikel Backend Test Suite")
+    print("="*80)
+    print(f"Backend URL: {BACKEND_URL}")
+    print(f"Admin: {ADMIN_EMAIL}")
+    print("="*80 + "\n")
     
-    try:
-        # Login
-        login()
-        
-        # Create test project
-        project_id, nominal = create_test_project()
-        
-        # Test (A): Retention from contract value
-        test_retention_from_contract_value(project_id, nominal)
-        
-        # Test (B): Overdue tracking
-        test_overdue_tracking(project_id)
-        
-        # Cleanup
-        cleanup()
-        
-        log("\n" + "=" * 80)
-        log("✓ ALL TESTS PASSED")
-        log("=" * 80)
-        
-    except AssertionError as e:
-        log(f"\n❌ TEST FAILED: {e}")
-        log("\nAttempting cleanup...")
-        cleanup()
-        raise
-    except Exception as e:
-        log(f"\n❌ UNEXPECTED ERROR: {e}")
-        log("\nAttempting cleanup...")
-        cleanup()
-        raise
+    # Run tests in order
+    tests = [
+        ("A. Public blog list", test_a_public_blog_list),
+        ("B1. Admin login", test_b1_admin_login),
+        ("B2. Admin create article", test_b2_admin_create_article),
+        ("B3. Admin list articles", test_b3_admin_list_articles),
+        ("B4. Admin get article", test_b4_admin_get_article),
+        ("B5. Admin update article", test_b5_admin_update_article),
+        ("B6. Public get article + views", test_b6_public_get_article_and_views),
+        ("B7. Public filter by category", test_b7_public_filter_by_category),
+        ("C1. SSR HTML", test_c1_ssr_html),
+        ("C2. Sitemap", test_c2_sitemap),
+        ("D. AI generate article", test_d_ai_generate),
+        ("D2. AI cover image", test_d2_ai_cover_image),
+        ("E. Gating free user", test_e_gating_free_user),
+        ("F. Cron auth and disabled", test_f_cron_auth_and_disabled),
+    ]
+    
+    for name, test_func in tests:
+        try:
+            test_func()
+        except Exception as e:
+            log_test(name, False, f"Unexpected exception: {e}")
+        print()  # Blank line between tests
+    
+    # Cleanup
+    cleanup_test_article()
+    
+    # Print summary
+    all_passed = print_summary()
+    
+    return 0 if all_passed else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

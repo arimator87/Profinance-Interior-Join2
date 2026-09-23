@@ -12,6 +12,7 @@ import {
   LineChart, Share2, DatabaseBackup, Star, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
+import Seo from "@/components/Seo";
 
 const FEATURES = [
   { icon: FileText, title: "RAB & Quotation Profesional", desc: "Susun Rencana Anggaran Biaya lengkap dengan material, PPN, diskon, termin — ekspor PDF Quotation berkop perusahaan & tanda tangan." },
@@ -110,6 +111,11 @@ export default function Landing() {
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
+      <Seo
+        title="Aplikasi Keuangan & Proyek Kontraktor Interior"
+        description="Kelola RAB, Invoice, Cash Flow, Kasbon Tukang, Kurva-S, dan Portal Klien dalam satu aplikasi untuk kontraktor interior & arsitektur. Mulai gratis, tanpa kartu kredit."
+        keywords="aplikasi kontraktor interior, software RAB, aplikasi invoice kontraktor, manajemen proyek interior, cash flow kontraktor, kurva-s"
+      />
       {/* Announcement / promo bar */}
       {bannerText && (
         <div data-testid="landing-banner" className={`w-full text-center text-[13px] font-semibold px-4 py-2 ${bannerIsPromo ? "bg-amber-600 text-white" : annTheme === "warning" ? "bg-red-600 text-white" : "bg-blue-600 text-white"}`}>
@@ -138,6 +144,8 @@ export default function Landing() {
             <a href="#cara" className="hover:text-slate-900">Cara Kerja</a>
             <a href="#harga" className="hover:text-slate-900">Harga</a>
             <a href="#faq" className="hover:text-slate-900">FAQ</a>
+            <button onClick={() => navigate("/blog")} className="hover:text-slate-900">Blog</button>
+            <button onClick={() => navigate("/panduan")} className="hover:text-slate-900">Panduan</button>
           </nav>
           <div className="flex items-center gap-2">
             {user ? (

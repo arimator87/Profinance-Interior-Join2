@@ -9,6 +9,7 @@ import { rupiah } from "@/lib/format";
 import { motion } from "framer-motion";
 import { Check, Crown, Sparkles, ArrowLeft, Loader2, ShieldCheck, Timer } from "lucide-react";
 import { toast } from "sonner";
+import Seo from "@/components/Seo";
 
 function fmtCountdown(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -126,6 +127,11 @@ export default function Pricing() {
 
   return (
     <div className="min-h-screen bg-slate-50 pf-grain">
+      <Seo
+        title="Harga & Paket Premium"
+        description="Pilih paket ProFinance Interior yang sesuai kebutuhan kontraktor interior Anda. Mulai gratis selamanya, upgrade ke Premium untuk Invoice, Kurva-S, dan Portal Klien."
+        keywords="harga aplikasi kontraktor, paket premium profinance, langganan aplikasi interior"
+      />
       <Header />
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-10">
         <button onClick={() => navigate("/dashboard")} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 mb-6">

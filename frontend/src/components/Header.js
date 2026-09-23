@@ -7,7 +7,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, PlayCircle, Receipt, BellRing, Settings, Users, Megaphone } from "lucide-react";
+import { Crown, LogOut, LayoutDashboard, Sparkles, Ruler, PlayCircle, Receipt, BellRing, Settings, Users, Megaphone, Newspaper } from "lucide-react";
 import { toast } from "sonner";
 
 const BANNER_THEMES = {
@@ -138,6 +138,9 @@ export function Header() {
                   </DropdownMenuItem>
                   <DropdownMenuItem data-testid="menu-admin-users" onClick={() => navigate("/admin/users")}>
                     <Users className="w-4 h-4 mr-2" /> Manajemen Pengguna
+                  </DropdownMenuItem>
+                  <DropdownMenuItem data-testid="menu-admin-articles" onClick={() => navigate("/admin/articles")}>
+                    <Newspaper className="w-4 h-4 mr-2" /> Kelola Blog & Artikel
                   </DropdownMenuItem>
                 </>
               )}

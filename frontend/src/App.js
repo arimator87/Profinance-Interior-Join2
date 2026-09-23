@@ -1,4 +1,5 @@
 import "@/App.css";
+import { HelmetProvider } from "react-helmet-async";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
@@ -12,8 +13,12 @@ import Pricing from "@/pages/Pricing";
 import Account from "@/pages/Account";
 import AdminSettings from "@/pages/AdminSettings";
 import AdminUsers from "@/pages/AdminUsers";
+import AdminArticles from "@/pages/AdminArticles";
 import ClientPortal from "@/pages/ClientPortal";
 import RabBuilder from "@/pages/RabBuilder";
+import Blog from "@/pages/Blog";
+import Article from "@/pages/Article";
+import Docs from "@/pages/Docs";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -38,6 +43,9 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/portal/:slug" element={<ClientPortal />} />
+      <Route path="/blog" element={<Blog />} />
+      <Route path="/blog/:slug" element={<Article />} />
+      <Route path="/panduan" element={<Docs />} />
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/project/:id" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>} />
       <Route path="/rab/new" element={<ProtectedRoute><RabBuilder /></ProtectedRoute>} />
@@ -46,6 +54,7 @@ function AppRoutes() {
       <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
       <Route path="/admin/settings" element={<ProtectedRoute><AdminSettings /></ProtectedRoute>} />
       <Route path="/admin/users" element={<ProtectedRoute><AdminUsers /></ProtectedRoute>} />
+      <Route path="/admin/articles" element={<ProtectedRoute><AdminArticles /></ProtectedRoute>} />
       <Route path="/" element={<Landing />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -54,14 +63,16 @@ function AppRoutes() {
 
 function App() {
   return (
-    <div className="App">
-      <BrowserRouter>
-        <AuthProvider>
-          <AppRoutes />
-          <Toaster position="top-right" richColors />
-        </AuthProvider>
-      </BrowserRouter>
-    </div>
+    <HelmetProvider>
+      <div className="App">
+        <BrowserRouter>
+          <AuthProvider>
+            <AppRoutes />
+            <Toaster position="top-right" richColors />
+          </AuthProvider>
+        </BrowserRouter>
+      </div>
+    </HelmetProvider>
   );
 }
 
