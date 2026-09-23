@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { rupiah } from "@/lib/format";
 import { Button } from "@/components/ui/button";
+import InstallAppButton from "@/components/InstallAppButton";
 import { motion } from "framer-motion";
 import {
   Ruler, Check, Sparkles, PlayCircle, ArrowRight, Crown, Megaphone, Timer, Quote,
@@ -170,13 +171,14 @@ export default function Landing() {
               Dari RAB, invoice, kasbon tukang, hingga Kurva-S dan portal klien — satu aplikasi
               untuk kontraktor interior & arsitektur agar proyek selalu untung dan penagihan tak pernah kelewat.
             </p>
-            <div className="mt-8 flex flex-col sm:flex-row gap-3">
+            <div className="mt-8 flex flex-col sm:flex-row sm:flex-wrap gap-3">
               <Button data-testid="hero-register-btn" onClick={goRegister} className="bg-amber-600 hover:bg-amber-700 text-white h-12 px-6 text-base gap-2">
                 Mulai Gratis Sekarang <ArrowRight className="w-4.5 h-4.5" />
               </Button>
               <Button data-testid="hero-demo-btn" onClick={tryDemo} disabled={demoBusy} variant="outline" className="h-12 px-6 text-base gap-2 border-white/30 bg-white/5 text-white hover:bg-white hover:text-slate-900">
                 <PlayCircle className="w-5 h-5" /> {demoBusy ? "Membuka..." : "Coba Akun Demo"}
               </Button>
+              <InstallAppButton className="h-12 px-6 text-base gap-2 border-white/30 bg-white/5 text-white hover:bg-white hover:text-slate-900" />
             </div>
             <div className="mt-6 flex items-center gap-4 text-sm text-slate-400 flex-wrap">
               <span className="flex items-center gap-1.5"><Check className="w-4 h-4 text-amber-400" /> Gratis selamanya</span>

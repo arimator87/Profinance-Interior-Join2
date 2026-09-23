@@ -21,3 +21,10 @@ root.render(
     </QueryClientProvider>
   </React.StrictMode>,
 );
+
+// Register minimal service worker so the app is installable as a PWA
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
