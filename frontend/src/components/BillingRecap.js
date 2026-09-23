@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api, recapXlsxUrl } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { FileCheck2, HandCoins, ShieldAlert, FileText, FileSpreadsheet } from "lucide-react";
+import { FileCheck2, HandCoins, ShieldAlert, FileText, FileSpreadsheet, AlertTriangle } from "lucide-react";
 import { rupiahShort, rupiah } from "@/lib/format";
 
 function Cell({ icon: Icon, label, value, color, sub }) {
@@ -45,7 +45,19 @@ export function BillingRecap({ projectId, refreshKey = 0 }) {
   return (
     <Card className="p-4 border-slate-200 bg-white" data-testid="billing-recap">
       <div className="flex items-center justify-between mb-3 gap-2">
-        <div className="text-sm font-semibold text-slate-800">Rekap Penagihan</div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-slate-800">Rekap Penagihan</span>
+          {recap.overdueCount > 0 && (
+            <span
+              data-testid="billing-overdue-badge"
+              title={`${recap.overdueCount} invoice melewati jatuh tempo · ${rupiah(recap.overdueAmount)}`}
+              className="inline-flex items-center gap-1 rounded-full bg-red-100 text-red-700 text-[11px] font-semibold px-2 py-0.5 animate-pulse"
+            >
+              <AlertTriangle className="w-3 h-3" />
+              {recap.overdueCount} jatuh tempo · {rupiahShort(recap.overdueAmount)}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-slate-400 hidden sm:inline">Nilai kontrak {rupiah(recap.nominal)}</span>
           <Button

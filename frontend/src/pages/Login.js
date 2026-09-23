@@ -6,7 +6,7 @@ import { rupiah } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Ruler, Loader2, Check, Sparkles, PlayCircle, Eye, EyeOff, Phone, Mail, Lock, Crown } from "lucide-react";
+import { Ruler, Loader2, Check, Sparkles, PlayCircle, Eye, EyeOff, Phone, Mail, Lock, Crown, Megaphone, Timer, Quote } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Login() {
@@ -43,6 +43,26 @@ export default function Login() {
   const mBase = pricing?.monthlyPrice ?? 149000;
   const mPromo = pricing?.monthlyPromo ?? mBase;
   const monthlyEff = promoLive && mPromo > 0 && mPromo < mBase ? mPromo : mBase;
+
+  // Dynamic banner from admin settings (announcement and/or live promo)
+  const announcement = (pricing?.announcement || "").trim();
+  const annTheme = pricing?.announcementTheme || "info";
+  const promoPct = promoLive && mBase > 0 && mPromo < mBase ? Math.round((1 - mPromo / mBase) * 100) : 0;
+  const bannerText = announcement
+    || (promoLive ? `Promo Premium: hemat ${promoPct > 0 ? promoPct + "% — " : ""}mulai ${rupiah(monthlyEff)}/bulan` : "");
+  const bannerIsPromo = !announcement && promoLive ? true : annTheme === "promo";
+  const bannerStyle = bannerIsPromo
+    ? "border-amber-300 bg-amber-50 text-amber-800"
+    : annTheme === "warning"
+      ? "border-red-200 bg-red-50 text-red-700"
+      : "border-blue-200 bg-blue-50 text-blue-700";
+  let promoCountdown = "";
+  if (promoLive && promoEnds) {
+    const ms = Math.max(0, promoEnds - Date.now());
+    const days = Math.floor(ms / 86400000);
+    const hrs = Math.floor((ms % 86400000) / 3600000);
+    promoCountdown = days > 0 ? `${days} hari ${hrs} jam lagi` : `${hrs} jam lagi`;
+  }
 
   const googleLogin = () => {
     // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
@@ -148,6 +168,26 @@ export default function Login() {
               ))}
             </div>
           </div>
+
+          {/* Testimoni klien */}
+          <div className="mt-9 max-w-md grid gap-3">
+            {[
+              { q: "RAB sampai invoice & progress klien jadi satu tempat. Penagihan nggak pernah kelewat lagi.", n: "Andika P.", r: "Kontraktor Interior, Bali" },
+              { q: "Kurva-S dan laporan PDF-nya bikin klien makin percaya. Terlihat jauh lebih profesional.", n: "Rina S.", r: "Studio Arsitektur, Bandung" },
+              { q: "Kasbon tukang & cash flow real-time. Untung-rugi tiap proyek langsung kelihatan.", n: "Budi H.", r: "Kontraktor Furniture, Surabaya" },
+            ].map((t, i) => (
+              <div key={i} className="rounded-xl border border-white/10 bg-white/5 backdrop-blur px-4 py-3">
+                <Quote className="w-4 h-4 text-amber-400 mb-1.5" />
+                <p className="text-sm text-slate-200 leading-relaxed">{`\u201c${t.q}\u201d`}</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] font-bold text-amber-300 shrink-0">
+                    {t.n.split(" ").map((w) => w[0]).join("").slice(0, 2)}
+                  </div>
+                  <div className="text-[11px] text-slate-400"><b className="text-slate-200">{t.n}</b> · {t.r}</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="text-xs text-slate-500 relative z-10">© 2026 ProFinance Interior · SaaS untuk Kontraktor</div>
@@ -156,6 +196,19 @@ export default function Login() {
       {/* Form */}
       <div className="flex items-center justify-center p-6 sm:p-12 bg-slate-50">
         <div className="w-full max-w-sm pf-rise">
+          {bannerText && (
+            <div data-testid="login-dynamic-banner" className={`mb-5 rounded-xl border px-3.5 py-2.5 flex items-start gap-2.5 ${bannerStyle}`}>
+              {bannerIsPromo ? <Megaphone className="w-4 h-4 mt-0.5 shrink-0" /> : <Sparkles className="w-4 h-4 mt-0.5 shrink-0" />}
+              <div className="min-w-0">
+                <p className="text-[12px] font-semibold leading-snug">{bannerText}</p>
+                {promoCountdown && (
+                  <p className="text-[11px] mt-0.5 flex items-center gap-1 opacity-80">
+                    <Timer className="w-3 h-3" /> Berakhir {promoCountdown}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
           <div className="lg:hidden flex items-center gap-2.5 mb-8">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center">
               <Ruler className="w-5 h-5 text-white" />

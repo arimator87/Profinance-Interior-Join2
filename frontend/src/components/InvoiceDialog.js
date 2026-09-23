@@ -105,8 +105,11 @@ export function InvoiceDialog({ open, onOpenChange, project, invoice = null, onS
     const subtotal = form.items.reduce((s, it) => s + Math.round((Number(it.qty) || 0) * (Number(it.unitPrice) || 0)), 0);
     const ppn = form.ppnEnabled ? Math.round((subtotal * (Number(form.ppnPercent) || 0)) / 100) : 0;
     const gross = subtotal + ppn;
-    const ret = form.retentionEnabled ? Math.round((subtotal * (Number(form.retentionPercent) || 0)) / 100) : 0;
-    return { subtotal, ppn, gross, ret, due: gross - ret };
+    // Retention is held back on the TOTAL CONTRACT VALUE (nilai kontrak), not the invoice subtotal.
+    const contractValue = Number(ctx?.project?.nominal) || 0;
+    const retBase = contractValue || subtotal;
+    const ret = form.retentionEnabled ? Math.round((retBase * (Number(form.retentionPercent) || 0)) / 100) : 0;
+    return { subtotal, ppn, gross, ret, due: gross - ret, contractValue };
   })();
 
   const submit = async () => {
@@ -267,9 +270,14 @@ export function InvoiceDialog({ open, onOpenChange, project, invoice = null, onS
                   <Switch data-testid="invoice-retention-switch" checked={form.retentionEnabled} onCheckedChange={(v) => set("retentionEnabled", v)} />
                 </div>
                 {form.retentionEnabled && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <Input type="number" value={form.retentionPercent} onChange={(e) => set("retentionPercent", e.target.value)} className="w-24 font-mono" />
-                    <span className="text-sm text-slate-500">% dari nilai pekerjaan</span>
+                  <div className="mt-2">
+                    <div className="flex items-center gap-2">
+                      <Input type="number" value={form.retentionPercent} onChange={(e) => set("retentionPercent", e.target.value)} className="w-24 font-mono" />
+                      <span className="text-sm text-slate-500">% dari Nilai Kontrak</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Nilai Kontrak {rupiah(preview?.contractValue || 0)} · Retensi ditahan {rupiah(preview?.ret || 0)}
+                    </p>
                   </div>
                 )}
               </div>
@@ -288,7 +296,7 @@ export function InvoiceDialog({ open, onOpenChange, project, invoice = null, onS
                 {form.retentionEnabled && preview.ret > 0 && (
                   <>
                     <Row label="Total" value={rupiah(preview.gross)} />
-                    <Row label={`Retensi ${Number(form.retentionPercent) || 0}% (ditahan)`} value={`- ${rupiah(preview.ret)}`} muted />
+                    <Row label={`Retensi ${Number(form.retentionPercent) || 0}% dari Nilai Kontrak (ditahan)`} value={`- ${rupiah(preview.ret)}`} muted />
                   </>
                 )}
                 <div className="border-t border-white/15 pt-1.5 mt-1.5">

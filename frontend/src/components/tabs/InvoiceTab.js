@@ -8,7 +8,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Loader2, FileText, Download, Share2, Pencil, Trash2, ReceiptText } from "lucide-react";
+import { Plus, Loader2, FileText, Download, Share2, Pencil, Trash2, ReceiptText, AlertTriangle } from "lucide-react";
 import { rupiah, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
 
@@ -165,8 +165,10 @@ export function InvoiceTab({ project, createSignal = 0, onChanged }) {
           {filtered.map((inv) => {
             const meta = TYPE_META[inv.type] || TYPE_META.final;
             const c = inv.computed || {};
+            const isOverdue = inv.dueDate && inv.status !== "Lunas" &&
+              inv.dueDate.slice(0, 10) < new Date().toISOString().slice(0, 10);
             return (
-              <Card key={inv.id} data-testid={`invoice-row-${inv.id}`} className="p-4 border-slate-200 bg-white hover:shadow-sm transition-shadow">
+              <Card key={inv.id} data-testid={`invoice-row-${inv.id}`} className={`p-4 bg-white hover:shadow-sm transition-shadow ${isOverdue ? "border-red-200" : "border-slate-200"}`}>
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="min-w-0 flex items-start gap-3">
                     <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0"><FileText className="w-5 h-5 text-slate-500" /></div>
@@ -174,8 +176,13 @@ export function InvoiceTab({ project, createSignal = 0, onChanged }) {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-slate-900 truncate">{inv.number}</span>
                         <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${meta.cls}`}>{meta.label}</span>
+                        {isOverdue && (
+                          <span data-testid={`invoice-overdue-${inv.id}`} className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                            <AlertTriangle className="w-3 h-3" /> Jatuh Tempo
+                          </span>
+                        )}
                       </div>
-                      <div className="text-xs text-slate-500 mt-0.5">
+                      <div className={`text-xs mt-0.5 ${isOverdue ? "text-red-600 font-medium" : "text-slate-500"}`}>
                         {fmtDate(inv.invoiceDate)}{inv.dueDate ? ` · Jatuh tempo ${fmtDate(inv.dueDate)}` : ""}
                       </div>
                       {inv.retentionEnabled && c.retentionAmount > 0 && (

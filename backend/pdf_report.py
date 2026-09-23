@@ -1103,7 +1103,7 @@ def build_invoice_pdf(invoice, computed):
     ret_on = computed.get("retentionEnabled") and computed.get("retentionAmount", 0) > 0
     if ret_on:
         srows.append(sumrow("Total", computed.get("grossTotal", 0), bold=True))
-        srows.append(sumrow(f"Retensi {computed.get('retentionPercent', 0):g}% (ditahan)", -computed.get("retentionAmount", 0)))
+        srows.append(sumrow(f"Retensi {computed.get('retentionPercent', 0):g}% dari Nilai Kontrak (ditahan)", -computed.get("retentionAmount", 0)))
     big_label = "DIBAYAR SEKARANG" if ret_on else "TOTAL TAGIHAN"
     srows.append(sumrow(big_label, computed.get("amountDue", 0), bold=True, big=True))
     ncols = len(srows)
@@ -1120,7 +1120,7 @@ def build_invoice_pdf(invoice, computed):
 
     if ret_on:
         story.append(Paragraph(
-            f"<i>Retensi {computed.get('retentionPercent', 0):g}% sebesar {rupiah(computed.get('retentionAmount', 0))} ditahan dan akan ditagih terpisah setelah masa pemeliharaan selesai.</i>",
+            f"<i>Retensi {computed.get('retentionPercent', 0):g}% dari Nilai Kontrak sebesar {rupiah(computed.get('retentionAmount', 0))} ditahan dan akan ditagih terpisah setelah masa pemeliharaan selesai.</i>",
             st_small))
         story.append(Spacer(1, 6))
 

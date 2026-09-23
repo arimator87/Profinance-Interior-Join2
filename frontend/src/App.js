@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
 import { Loader2 } from "lucide-react";
 import AuthCallback from "@/components/AuthCallback";
+import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import ProjectDetail from "@/pages/ProjectDetail";
@@ -45,8 +46,8 @@ function AppRoutes() {
       <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
       <Route path="/admin/settings" element={<ProtectedRoute><AdminSettings /></ProtectedRoute>} />
       <Route path="/admin/users" element={<ProtectedRoute><AdminUsers /></ProtectedRoute>} />
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<Landing />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

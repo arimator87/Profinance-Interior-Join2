@@ -154,14 +154,18 @@ def compute_invoice(inv: dict) -> dict:
     gross = subtotal + ppn_amount
     ret_enabled = bool(inv.get("retentionEnabled"))
     ret_percent = float(inv.get("retentionPercent") or 0)
-    # Retention is held back on the work value (DPP / subtotal), per common practice
-    ret_amount = round(subtotal * ret_percent / 100) if ret_enabled else 0
+    # Retention is held back on the TOTAL CONTRACT VALUE (nilai kontrak).
+    # contractValue is stored on the invoice at create/update time; fall back to
+    # the invoice subtotal for older documents that predate this field.
+    ret_base = int(inv.get("contractValue") or 0) or subtotal
+    ret_amount = round(ret_base * ret_percent / 100) if ret_enabled else 0
     amount_due = gross - ret_amount
     return {
         "items": items_out, "subtotal": subtotal,
         "ppnEnabled": ppn_enabled, "ppnPercent": ppn_percent, "ppnAmount": ppn_amount,
         "grossTotal": gross,
         "retentionEnabled": ret_enabled, "retentionPercent": ret_percent, "retentionAmount": ret_amount,
+        "retentionBase": ret_base,
         "amountDue": amount_due,
     }
 
@@ -1850,6 +1854,9 @@ async def billing_recap(project_id: str, user: dict = Depends(require_premium)):
     draft_amount = 0
     retention_held = 0
     billed_count = 0
+    overdue_count = 0
+    overdue_amount = 0
+    today = datetime.now(timezone.utc).date().isoformat()
     for inv in invoices:
         comp = compute_invoice(inv)
         retention_held += comp.get("retentionAmount", 0)
@@ -1858,6 +1865,11 @@ async def billing_recap(project_id: str, user: dict = Depends(require_premium)):
             billed_count += 1
         else:
             draft_amount += comp.get("amountDue", 0)
+        # Overdue: unpaid invoice (not Lunas) with a due date already in the past
+        due = (inv.get("dueDate") or "")[:10]
+        if due and inv.get("status") != "Lunas" and due < today:
+            overdue_count += 1
+            overdue_amount += comp.get("amountDue", 0)
     paid = summary.get("terbayar", 0)
     receivable = max(0, total_billed - paid)
     return {
@@ -1870,6 +1882,8 @@ async def billing_recap(project_id: str, user: dict = Depends(require_premium)):
         "sisaTagihan": summary.get("sisaTagihan", 0),
         "invoiceCount": len(invoices),
         "billedCount": billed_count,
+        "overdueCount": overdue_count,
+        "overdueAmount": overdue_amount,
     }
 
 
@@ -1945,6 +1959,7 @@ async def create_invoice(project_id: str, body: InvoiceIn, user: dict = Depends(
         **body.model_dump(),
         "number": body.number.strip(),
         "invoiceDate": body.invoiceDate or now_iso(),
+        "contractValue": int(p.get("nominal") or 0),
         "createdAt": now_iso(), "updatedAt": now_iso(),
     }
     await db.invoices.insert_one(doc)
@@ -1967,14 +1982,20 @@ async def get_invoice(invoice_id: str, user: dict = Depends(require_premium)):
 
 @api.put("/invoices/{invoice_id}")
 async def update_invoice(invoice_id: str, body: InvoiceIn, user: dict = Depends(require_premium)):
-    await _get_owned_invoice(invoice_id, user)
+    existing = await _get_owned_invoice(invoice_id, user)
     if body.type not in INVOICE_TYPES:
         raise HTTPException(status_code=400, detail="Tipe invoice tidak valid")
     if not (body.number or "").strip():
         raise HTTPException(status_code=400, detail="Nomor invoice wajib diisi")
     if body.signatureImage and len(body.signatureImage) > 3_000_000:
         raise HTTPException(status_code=400, detail="Gambar tanda tangan terlalu besar (maks ~2MB)")
-    updates = {**body.model_dump(), "number": body.number.strip(), "updatedAt": now_iso()}
+    # Refresh the contract value (retention base) from the current project nominal.
+    contract_value = int(existing.get("contractValue") or 0)
+    proj = await db.projects.find_one({"id": existing.get("project_id")}, {"_id": 0, "nominal": 1})
+    if proj:
+        contract_value = int(proj.get("nominal") or 0)
+    updates = {**body.model_dump(), "number": body.number.strip(),
+               "contractValue": contract_value, "updatedAt": now_iso()}
     await db.invoices.update_one({"id": invoice_id}, {"$set": updates})
     inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
     return _invoice_public(inv)
