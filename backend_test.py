@@ -9,7 +9,7 @@ import sys
 import time
 
 # Backend URL from frontend/.env
-BASE_URL = "https://profinance-interior-1.preview.emergentagent.com/api"
+BASE_URL = "https://interior-join.preview.emergentagent.com/api"
 
 # Test credentials
 PREMIUM_EMAIL = "furnitrue.mail@gmail.com"
