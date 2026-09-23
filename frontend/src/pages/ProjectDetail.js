@@ -51,6 +51,7 @@ export default function ProjectDetail() {
   const [editOpen, setEditOpen] = useState(false);
   const [backing, setBacking] = useState(false);
   const [invoiceSignal, setInvoiceSignal] = useState(0);
+  const [recapSignal, setRecapSignal] = useState(0);
 
   const loadProject = useCallback(async () => {
     try {
@@ -197,6 +198,10 @@ export default function ProjectDetail() {
           )}
         </div>
 
+        <div className="mb-5">
+          <BillingRecap projectId={project.id} refreshKey={recapSignal} />
+        </div>
+
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="grid grid-cols-5 w-full bg-slate-100 p-1 h-auto">
             <TabTrigger value="cashflow" icon={Wallet2} label="Cash Flow" testid="tab-cashflow" />
@@ -213,7 +218,7 @@ export default function ProjectDetail() {
             <TukangTab project={project} workers={workers} onChange={refreshFinance} />
           </TabsContent>
           <TabsContent value="invoice" className="mt-5">
-            {isPremium ? <InvoiceTab project={project} createSignal={invoiceSignal} /> : (
+            {isPremium ? <InvoiceTab project={project} createSignal={invoiceSignal} onChanged={() => setRecapSignal((n) => n + 1)} /> : (
               <Paywall testid="paywall-banner-invoice" title="Invoice & Proforma (Premium)"
                 features={[
                   "Proforma Invoice untuk DP & termin pembayaran",

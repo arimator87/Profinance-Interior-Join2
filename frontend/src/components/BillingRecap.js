@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
-import { api } from "@/lib/api";
+import { api, recapXlsxUrl } from "@/lib/api";
 import { Card } from "@/components/ui/card";
-import { FileCheck2, HandCoins, ShieldAlert, FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { FileCheck2, HandCoins, ShieldAlert, FileText, FileSpreadsheet } from "lucide-react";
 import { rupiahShort, rupiah } from "@/lib/format";
 
 function Cell({ icon: Icon, label, value, color, sub }) {
@@ -43,9 +44,20 @@ export function BillingRecap({ projectId, refreshKey = 0 }) {
 
   return (
     <Card className="p-4 border-slate-200 bg-white" data-testid="billing-recap">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 gap-2">
         <div className="text-sm font-semibold text-slate-800">Rekap Penagihan</div>
-        <div className="text-[11px] text-slate-400">Nilai kontrak {rupiah(recap.nominal)}</div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-400 hidden sm:inline">Nilai kontrak {rupiah(recap.nominal)}</span>
+          <Button
+            data-testid="btn-export-recap-xlsx"
+            variant="outline"
+            size="sm"
+            onClick={() => window.open(recapXlsxUrl(projectId), "_blank")}
+            className="gap-1.5 h-8 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" /> Ekspor Excel
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

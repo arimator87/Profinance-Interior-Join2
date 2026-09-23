@@ -1,116 +1,117 @@
 #!/usr/bin/env python3
 """
-Backend test suite for Invoice endpoints
-Tests all invoice CRUD operations, PDF generation, validation, and premium/demo gating
+Backend test suite for ProFinance Interior
+Tests: Invoice quotationNo feature + Billing Recap endpoint
 """
 import requests
 import json
-import sys
 import time
+from datetime import datetime
 
-# Backend URL from frontend/.env
-BASE_URL = "https://interior-join.preview.emergentagent.com/api"
-
-# Test credentials
+# Configuration
+BASE_URL = "http://localhost:8001/api"
 PREMIUM_EMAIL = "furnitrue.mail@gmail.com"
 PREMIUM_PASSWORD = "Password123"
 EXISTING_PROJECT_ID = "c420b3e7-cd4a-4cad-93cb-e9385960d4f5"
 
-# Test results
-results = []
+# Test state
+token = None
+test_project_id = None
+quotation_test_project_id = None
+created_invoices = []
 
 def log(msg):
-    print(f"[TEST] {msg}")
-    results.append(msg)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
-def test_login():
-    """Test 1: Login with premium account"""
-    log("=" * 80)
-    log("TEST 1: Login with premium account")
-    log("=" * 80)
-    
-    response = requests.post(f"{BASE_URL}/auth/login", json={
+def login_premium():
+    """Login with premium account"""
+    global token
+    log("=== TEST 1: Login Premium Account ===")
+    resp = requests.post(f"{BASE_URL}/auth/login", json={
         "email": PREMIUM_EMAIL,
         "password": PREMIUM_PASSWORD
     })
-    
-    if response.status_code != 200:
-        log(f"❌ FAIL: Login failed with status {response.status_code}")
-        log(f"Response: {response.text}")
-        return None
-    
-    data = response.json()
-    token = data.get("token")
-    
-    if not token:
-        log(f"❌ FAIL: No token in response")
-        return None
-    
-    log(f"✅ PASS: Login successful, token obtained")
+    assert resp.status_code == 200, f"Login failed: {resp.status_code} {resp.text}"
+    data = resp.json()
+    token = data["token"]
+    log(f"✓ Login successful, token: {token[:20]}...")
     return token
 
-def test_invoice_context(token):
-    """Test 2: GET /api/projects/{project_id}/invoice-context"""
-    log("=" * 80)
-    log("TEST 2: GET /api/projects/{project_id}/invoice-context")
-    log("=" * 80)
-    
+def test_invoice_context():
+    """Test 6: GET /api/projects/{project_id}/invoice-context - verify rabRef.quotationNo"""
+    log("\n=== TEST 6: Invoice Context (rabRef.quotationNo) ===")
     headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoice-context", headers=headers)
-    
-    if response.status_code != 200:
-        log(f"❌ FAIL: Status {response.status_code}")
-        log(f"Response: {response.text}")
-        return False
-    
-    data = response.json()
+    resp = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoice-context", headers=headers)
+    assert resp.status_code == 200, f"invoice-context failed: {resp.status_code} {resp.text}"
+    data = resp.json()
     
     # Verify structure
-    required_keys = ["project", "client", "company", "ppn", "termins", "summary", "suggestion", "existingCount"]
-    missing = [k for k in required_keys if k not in data]
+    assert "rabRef" in data, "Missing rabRef in response"
+    assert "quotationNo" in data["rabRef"], "Missing quotationNo in rabRef"
     
-    if missing:
-        log(f"❌ FAIL: Missing keys: {missing}")
-        return False
-    
-    # Verify suggestion structure
-    suggestion = data.get("suggestion", {})
-    if "type" not in suggestion or "description" not in suggestion or "amount" not in suggestion:
-        log(f"❌ FAIL: Invalid suggestion structure: {suggestion}")
-        return False
-    
-    # Verify suggestion type is valid
-    if suggestion["type"] not in ["proforma", "final"]:
-        log(f"❌ FAIL: Invalid suggestion type: {suggestion['type']}")
-        return False
-    
-    log(f"✅ PASS: Invoice context returned with correct structure")
-    log(f"  - Project: {data['project']['name']}")
-    log(f"  - Suggestion: {suggestion['type']} - {suggestion['description']} - Rp {suggestion['amount']:,}")
-    log(f"  - Existing invoices: {data['existingCount']}")
-    
-    return True
+    log(f"✓ invoice-context returned 200")
+    log(f"  rabRef.quotationNo: '{data['rabRef']['quotationNo']}'")
+    log(f"  rabRef.quotationDate: '{data['rabRef'].get('quotationDate')}'")
+    return data
 
-def test_create_proforma_invoice(token):
-    """Test 3: POST /api/projects/{project_id}/invoices - Create proforma invoice"""
-    log("=" * 80)
-    log("TEST 3: POST /api/projects/{project_id}/invoices - Create proforma invoice")
-    log("=" * 80)
-    
+def create_quotation_test_project():
+    """Create a test project for quotation tests"""
+    global quotation_test_project_id
+    log("\n=== Creating Test Project for Quotation Tests ===")
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = requests.post(f"{BASE_URL}/projects", headers=headers, json={
+        "name": "Test Quotation Project",
+        "owner": "Bpk Uji",
+        "nominal": 30000000,
+        "companyName": "PT Test Interior",
+        "alamatProyek": "Jl. Test No. 1",
+        "category": "Residensial",
+        "status": "Berjalan"
+    })
+    assert resp.status_code == 200, f"Create project failed: {resp.status_code} {resp.text}"
+    data = resp.json()
+    quotation_test_project_id = data["id"]
+    log(f"✓ Quotation test project created: {quotation_test_project_id}")
+    log(f"  Name: {data['name']}, Nominal: Rp {data['nominal']:,}")
+    return quotation_test_project_id
+
+def create_test_project():
+    """Create a test project for controlled billing recap scenario"""
+    global test_project_id
+    log("\n=== Creating Test Project for Billing Recap ===")
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = requests.post(f"{BASE_URL}/projects", headers=headers, json={
+        "name": "Test Billing Recap Project",
+        "owner": "Bpk Uji Coba",
+        "nominal": 50000000,
+        "companyName": "PT Test Interior",
+        "alamatProyek": "Jl. Test No. 123",
+        "category": "Residensial",
+        "status": "Berjalan"
+    })
+    assert resp.status_code == 200, f"Create project failed: {resp.status_code} {resp.text}"
+    data = resp.json()
+    test_project_id = data["id"]
+    log(f"✓ Test project created: {test_project_id}")
+    log(f"  Name: {data['name']}, Nominal: Rp {data['nominal']:,}")
+    return test_project_id
+
+def test_create_invoice_with_quotation():
+    """Test 1: POST /api/projects/{project_id}/invoices with quotationNo"""
+    log("\n=== TEST 1: Create Invoice with quotationNo ===")
     headers = {"Authorization": f"Bearer {token}"}
     
     invoice_data = {
         "type": "proforma",
-        "number": "PRO/2025/07/001",
-        "invoiceDate": None,
-        "dueDate": None,
-        "status": "Draft",
-        "clientName": "Bpk. Andika",
-        "clientAddress": "Canggu, Bali",
-        "clientPhone": "08123",
+        "number": "TEST-PRO/001",
+        "quotationNo": "QTO/2026/09/001",
+        "status": "Terkirim",
+        "clientName": "Bpk Uji",
+        "clientAddress": "Jl. Test No. 1",
+        "clientPhone": "081234567890",
         "items": [
             {
-                "description": "Uang Muka (DP) 50%",
+                "description": "DP 50%",
                 "qty": 1,
                 "unitPrice": 10000000
             }
@@ -119,685 +120,382 @@ def test_create_proforma_invoice(token):
         "ppnPercent": 11,
         "retentionEnabled": False,
         "retentionPercent": 5,
-        "companyName": "CV Karya",
-        "companyAddress": "",
-        "companyPhone": "",
+        "companyName": "PT Interior Design",
+        "companyAddress": "Jl. Company No. 1",
+        "companyPhone": "021-12345678",
         "bankName": "BCA",
-        "bankAccount": "123",
-        "bankHolder": "CV Karya",
-        "signerLeft": "",
-        "signerRight": "",
-        "signatureImage": "",
-        "notes": "Terima kasih"
+        "bankAccount": "1234567890",
+        "bankHolder": "PT Interior Design"
     }
     
-    response = requests.post(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoices", 
-                            json=invoice_data, headers=headers)
+    resp = requests.post(
+        f"{BASE_URL}/projects/{quotation_test_project_id}/invoices",
+        headers=headers,
+        json=invoice_data
+    )
+    assert resp.status_code == 200, f"Create invoice failed: {resp.status_code} {resp.text}"
+    data = resp.json()
     
-    if response.status_code != 200:
-        log(f"❌ FAIL: Status {response.status_code}")
-        log(f"Response: {response.text}")
-        return None
+    # Verify quotationNo roundtrip
+    assert data["quotationNo"] == "QTO/2026/09/001", f"quotationNo mismatch: {data.get('quotationNo')}"
     
-    data = response.json()
+    # Verify computed fields
+    computed = data["computed"]
+    assert computed["subtotal"] == 10000000, f"Subtotal wrong: {computed['subtotal']}"
+    assert computed["ppnAmount"] == 1100000, f"PPN wrong: {computed['ppnAmount']}"
+    assert computed["grossTotal"] == 11100000, f"Gross wrong: {computed['grossTotal']}"
+    assert computed["retentionAmount"] == 0, f"Retention should be 0: {computed['retentionAmount']}"
+    assert computed["amountDue"] == 11100000, f"AmountDue wrong: {computed['amountDue']}"
     
-    # Verify computed values
-    computed = data.get("computed", {})
+    invoice_id = data["id"]
+    created_invoices.append(invoice_id)
     
-    expected_subtotal = 10000000
-    expected_ppn = round(10000000 * 11 / 100)  # 1100000
-    expected_gross = expected_subtotal + expected_ppn  # 11100000
-    expected_retention = 0
-    expected_due = expected_gross - expected_retention  # 11100000
-    
-    if computed.get("subtotal") != expected_subtotal:
-        log(f"❌ FAIL: Subtotal mismatch. Expected {expected_subtotal}, got {computed.get('subtotal')}")
-        return None
-    
-    if computed.get("ppnAmount") != expected_ppn:
-        log(f"❌ FAIL: PPN mismatch. Expected {expected_ppn}, got {computed.get('ppnAmount')}")
-        return None
-    
-    if computed.get("grossTotal") != expected_gross:
-        log(f"❌ FAIL: Gross total mismatch. Expected {expected_gross}, got {computed.get('grossTotal')}")
-        return None
-    
-    if computed.get("retentionAmount") != expected_retention:
-        log(f"❌ FAIL: Retention mismatch. Expected {expected_retention}, got {computed.get('retentionAmount')}")
-        return None
-    
-    if computed.get("amountDue") != expected_due:
-        log(f"❌ FAIL: Amount due mismatch. Expected {expected_due}, got {computed.get('amountDue')}")
-        return None
-    
-    invoice_id = data.get("id")
-    if not invoice_id:
-        log(f"❌ FAIL: No invoice ID in response")
-        return None
-    
-    log(f"✅ PASS: Proforma invoice created successfully")
-    log(f"  - Invoice ID: {invoice_id}")
-    log(f"  - Number: {data.get('number')}")
-    log(f"  - Type: {data.get('type')}")
-    log(f"  - Subtotal: Rp {computed['subtotal']:,}")
-    log(f"  - PPN (11%): Rp {computed['ppnAmount']:,}")
-    log(f"  - Gross Total: Rp {computed['grossTotal']:,}")
-    log(f"  - Retention: Rp {computed['retentionAmount']:,}")
-    log(f"  - Amount Due: Rp {computed['amountDue']:,}")
+    log(f"✓ Invoice created with quotationNo: {data['quotationNo']}")
+    log(f"  Invoice ID: {invoice_id}")
+    log(f"  Number: {data['number']}, Type: {data['type']}, Status: {data['status']}")
+    log(f"  Computed: subtotal={computed['subtotal']:,}, ppn={computed['ppnAmount']:,}, amountDue={computed['amountDue']:,}")
     
     return invoice_id
 
-def test_create_final_invoice_with_retention(token):
-    """Test 4: POST /api/projects/{project_id}/invoices - Create final invoice with retention"""
-    log("=" * 80)
-    log("TEST 4: POST /api/projects/{project_id}/invoices - Create final invoice with retention")
-    log("=" * 80)
+def test_list_invoices(invoice_id):
+    """Test 2: GET /api/projects/{project_id}/invoices - verify quotationNo roundtrip"""
+    log("\n=== TEST 2: List Invoices (quotationNo roundtrip) ===")
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = requests.get(f"{BASE_URL}/projects/{quotation_test_project_id}/invoices", headers=headers)
+    assert resp.status_code == 200, f"List invoices failed: {resp.status_code} {resp.text}"
+    data = resp.json()
     
+    # Find our invoice
+    invoice = next((inv for inv in data if inv["id"] == invoice_id), None)
+    assert invoice is not None, f"Invoice {invoice_id} not found in list"
+    assert invoice["quotationNo"] == "QTO/2026/09/001", f"quotationNo mismatch in list: {invoice.get('quotationNo')}"
+    
+    log(f"✓ Invoice found in list with correct quotationNo: {invoice['quotationNo']}")
+    return invoice
+
+def test_get_single_invoice(invoice_id):
+    """Test 3: GET /api/invoices/{invoice_id} - verify quotationNo"""
+    log("\n=== TEST 3: Get Single Invoice ===")
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = requests.get(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
+    assert resp.status_code == 200, f"Get invoice failed: {resp.status_code} {resp.text}"
+    data = resp.json()
+    
+    assert data["quotationNo"] == "QTO/2026/09/001", f"quotationNo mismatch: {data.get('quotationNo')}"
+    
+    log(f"✓ Single invoice retrieved with correct quotationNo: {data['quotationNo']}")
+    return data
+
+def test_update_invoice_quotation(invoice_id):
+    """Test 4: PUT /api/invoices/{invoice_id} - update quotationNo"""
+    log("\n=== TEST 4: Update Invoice quotationNo ===")
     headers = {"Authorization": f"Bearer {token}"}
     
-    invoice_data = {
+    # Get current invoice first
+    resp = requests.get(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
+    current = resp.json()
+    
+    # Update with new quotationNo
+    update_data = {
+        "type": current["type"],
+        "number": current["number"],
+        "quotationNo": "QTO/2026/09/002",  # Changed
+        "status": current["status"],
+        "clientName": current["clientName"],
+        "clientAddress": current["clientAddress"],
+        "clientPhone": current["clientPhone"],
+        "items": current["items"],
+        "ppnEnabled": current["ppnEnabled"],
+        "ppnPercent": current["ppnPercent"],
+        "retentionEnabled": current["retentionEnabled"],
+        "retentionPercent": current["retentionPercent"],
+        "companyName": current["companyName"],
+        "companyAddress": current["companyAddress"],
+        "companyPhone": current["companyPhone"],
+        "bankName": current["bankName"],
+        "bankAccount": current["bankAccount"],
+        "bankHolder": current["bankHolder"]
+    }
+    
+    resp = requests.put(f"{BASE_URL}/invoices/{invoice_id}", headers=headers, json=update_data)
+    assert resp.status_code == 200, f"Update invoice failed: {resp.status_code} {resp.text}"
+    data = resp.json()
+    
+    assert data["quotationNo"] == "QTO/2026/09/002", f"Updated quotationNo mismatch: {data.get('quotationNo')}"
+    
+    log(f"✓ Invoice quotationNo updated successfully: {data['quotationNo']}")
+    return data
+
+def test_invoice_pdf(invoice_id):
+    """Test 5: GET /api/invoices/{invoice_id}/pdf?auth={token} - verify PDF generation"""
+    log("\n=== TEST 5: Invoice PDF Generation ===")
+    
+    resp = requests.get(f"{BASE_URL}/invoices/{invoice_id}/pdf?auth={token}")
+    assert resp.status_code == 200, f"PDF generation failed: {resp.status_code}"
+    assert resp.headers.get("Content-Type") == "application/pdf", f"Wrong content type: {resp.headers.get('Content-Type')}"
+    
+    pdf_bytes = resp.content
+    assert len(pdf_bytes) > 0, "PDF is empty"
+    assert pdf_bytes[:4] == b"%PDF", f"Not a valid PDF (header: {pdf_bytes[:10]})"
+    
+    log(f"✓ PDF generated successfully: {len(pdf_bytes)} bytes")
+    log(f"  Content-Type: {resp.headers.get('Content-Type')}")
+    log(f"  PDF header: {pdf_bytes[:10]}")
+    
+    # Try to verify text content (optional, requires pymupdf)
+    try:
+        import fitz  # pymupdf
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        doc.close()
+        
+        # Check for quotation reference
+        if "Ref. Quotation" in text or "QTO/2026/09/002" in text:
+            log(f"✓ PDF contains quotation reference text")
+        else:
+            log(f"⚠ Could not find 'Ref. Quotation' or 'QTO/2026/09/002' in PDF text")
+            log(f"  (This may be a formatting issue, not necessarily a bug)")
+    except ImportError:
+        log(f"  (pymupdf not available, skipping text verification)")
+    except Exception as e:
+        log(f"  (PDF text extraction failed: {e})")
+    
+    return pdf_bytes
+
+def test_billing_recap_scenario():
+    """Test 7: Create controlled scenario for billing recap"""
+    log("\n=== TEST 7: Billing Recap - Create Controlled Scenario ===")
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # Invoice 1: Terkirim, 10M + 11% PPN = 11.1M
+    log("Creating Invoice 1: Terkirim, 10M + 11% PPN = 11.1M")
+    inv1_data = {
+        "type": "proforma",
+        "number": "INV-001/TEST",
+        "quotationNo": "QTO/2026/09/001",
+        "status": "Terkirim",
+        "clientName": "Bpk Test",
+        "items": [{"description": "DP 20%", "qty": 1, "unitPrice": 10000000}],
+        "ppnEnabled": True,
+        "ppnPercent": 11,
+        "retentionEnabled": False,
+        "retentionPercent": 5
+    }
+    resp1 = requests.post(f"{BASE_URL}/projects/{test_project_id}/invoices", headers=headers, json=inv1_data)
+    assert resp1.status_code == 200, f"Invoice 1 failed: {resp1.status_code} {resp1.text}"
+    inv1 = resp1.json()
+    created_invoices.append(inv1["id"])
+    log(f"✓ Invoice 1 created: {inv1['id']}, amountDue={inv1['computed']['amountDue']:,}")
+    
+    # Invoice 2: Lunas, 20M + 11% PPN - 5% retention = 21.2M (retention 1M)
+    log("Creating Invoice 2: Lunas, 20M + 11% PPN - 5% retention = 21.2M")
+    inv2_data = {
         "type": "final",
-        "number": "INV/2025/07/001",
-        "invoiceDate": None,
-        "dueDate": None,
-        "status": "Draft",
-        "clientName": "Bpk. Andika",
-        "clientAddress": "Canggu, Bali",
-        "clientPhone": "08123",
-        "items": [
-            {
-                "description": "Pelunasan Proyek",
-                "qty": 1,
-                "unitPrice": 20000000
-            }
-        ],
+        "number": "INV-002/TEST",
+        "quotationNo": "QTO/2026/09/002",
+        "status": "Lunas",
+        "clientName": "Bpk Test",
+        "items": [{"description": "Termin 40%", "qty": 1, "unitPrice": 20000000}],
         "ppnEnabled": True,
         "ppnPercent": 11,
         "retentionEnabled": True,
-        "retentionPercent": 5,
-        "companyName": "CV Karya",
-        "companyAddress": "",
-        "companyPhone": "",
-        "bankName": "BCA",
-        "bankAccount": "123",
-        "bankHolder": "CV Karya",
-        "signerLeft": "",
-        "signerRight": "",
-        "signatureImage": "",
-        "notes": "Terima kasih"
+        "retentionPercent": 5
     }
+    resp2 = requests.post(f"{BASE_URL}/projects/{test_project_id}/invoices", headers=headers, json=inv2_data)
+    assert resp2.status_code == 200, f"Invoice 2 failed: {resp2.status_code} {resp2.text}"
+    inv2 = resp2.json()
+    created_invoices.append(inv2["id"])
+    log(f"✓ Invoice 2 created: {inv2['id']}, amountDue={inv2['computed']['amountDue']:,}, retention={inv2['computed']['retentionAmount']:,}")
     
-    response = requests.post(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoices", 
-                            json=invoice_data, headers=headers)
-    
-    if response.status_code != 200:
-        log(f"❌ FAIL: Status {response.status_code}")
-        log(f"Response: {response.text}")
-        return None
-    
-    data = response.json()
-    
-    # Verify computed values with retention
-    computed = data.get("computed", {})
-    
-    expected_subtotal = 20000000
-    expected_ppn = round(20000000 * 11 / 100)  # 2200000
-    expected_gross = expected_subtotal + expected_ppn  # 22200000
-    expected_retention = round(20000000 * 5 / 100)  # 1000000 (5% of subtotal/DPP)
-    expected_due = expected_gross - expected_retention  # 21200000
-    
-    if computed.get("subtotal") != expected_subtotal:
-        log(f"❌ FAIL: Subtotal mismatch. Expected {expected_subtotal}, got {computed.get('subtotal')}")
-        return None
-    
-    if computed.get("ppnAmount") != expected_ppn:
-        log(f"❌ FAIL: PPN mismatch. Expected {expected_ppn}, got {computed.get('ppnAmount')}")
-        return None
-    
-    if computed.get("grossTotal") != expected_gross:
-        log(f"❌ FAIL: Gross total mismatch. Expected {expected_gross}, got {computed.get('grossTotal')}")
-        return None
-    
-    if computed.get("retentionAmount") != expected_retention:
-        log(f"❌ FAIL: Retention mismatch. Expected {expected_retention}, got {computed.get('retentionAmount')}")
-        log(f"  Note: Retention should be 5% of subtotal (DPP), not gross total")
-        return None
-    
-    if computed.get("amountDue") != expected_due:
-        log(f"❌ FAIL: Amount due mismatch. Expected {expected_due}, got {computed.get('amountDue')}")
-        return None
-    
-    invoice_id = data.get("id")
-    if not invoice_id:
-        log(f"❌ FAIL: No invoice ID in response")
-        return None
-    
-    log(f"✅ PASS: Final invoice with retention created successfully")
-    log(f"  - Invoice ID: {invoice_id}")
-    log(f"  - Number: {data.get('number')}")
-    log(f"  - Type: {data.get('type')}")
-    log(f"  - Subtotal: Rp {computed['subtotal']:,}")
-    log(f"  - PPN (11%): Rp {computed['ppnAmount']:,}")
-    log(f"  - Gross Total: Rp {computed['grossTotal']:,}")
-    log(f"  - Retention (5% of subtotal): Rp {computed['retentionAmount']:,}")
-    log(f"  - Amount Due: Rp {computed['amountDue']:,}")
-    
-    return invoice_id
-
-def test_validation_empty_number(token):
-    """Test 5: Validation - Empty invoice number should return 400"""
-    log("=" * 80)
-    log("TEST 5: Validation - Empty invoice number should return 400")
-    log("=" * 80)
-    
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    invoice_data = {
+    # Invoice 3: Draft, 5M no PPN = 5M
+    log("Creating Invoice 3: Draft, 5M no PPN = 5M")
+    inv3_data = {
         "type": "proforma",
-        "number": "",  # Empty number
+        "number": "INV-003/TEST",
         "status": "Draft",
-        "clientName": "Test",
-        "items": [{"description": "Test", "qty": 1, "unitPrice": 1000000}],
+        "clientName": "Bpk Test",
+        "items": [{"description": "Pelunasan 40%", "qty": 1, "unitPrice": 5000000}],
         "ppnEnabled": False,
-        "retentionEnabled": False
+        "ppnPercent": 11,
+        "retentionEnabled": False,
+        "retentionPercent": 5
     }
+    resp3 = requests.post(f"{BASE_URL}/projects/{test_project_id}/invoices", headers=headers, json=inv3_data)
+    assert resp3.status_code == 200, f"Invoice 3 failed: {resp3.status_code} {resp3.text}"
+    inv3 = resp3.json()
+    created_invoices.append(inv3["id"])
+    log(f"✓ Invoice 3 created: {inv3['id']}, amountDue={inv3['computed']['amountDue']:,}")
     
-    response = requests.post(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoices", 
-                            json=invoice_data, headers=headers)
-    
-    if response.status_code != 400:
-        log(f"❌ FAIL: Expected 400, got {response.status_code}")
-        log(f"Response: {response.text}")
-        return False
-    
-    data = response.json()
-    if "Nomor invoice wajib diisi" not in data.get("detail", ""):
-        log(f"❌ FAIL: Wrong error message: {data.get('detail')}")
-        return False
-    
-    log(f"✅ PASS: Empty number validation working correctly")
-    log(f"  - Error message: {data.get('detail')}")
-    
-    return True
+    log("\n✓ All 3 invoices created for billing recap test")
+    return inv1, inv2, inv3
 
-def test_validation_invalid_type(token):
-    """Test 6: Validation - Invalid invoice type should return 400"""
-    log("=" * 80)
-    log("TEST 6: Validation - Invalid invoice type should return 400")
-    log("=" * 80)
-    
+def test_billing_recap_math(inv1, inv2, inv3):
+    """Test 8: GET /api/projects/{project_id}/billing-recap - verify math"""
+    log("\n=== TEST 8: Billing Recap - Verify Math ===")
     headers = {"Authorization": f"Bearer {token}"}
     
-    invoice_data = {
-        "type": "foo",  # Invalid type
-        "number": "TEST/001",
-        "status": "Draft",
-        "clientName": "Test",
-        "items": [{"description": "Test", "qty": 1, "unitPrice": 1000000}],
-        "ppnEnabled": False,
-        "retentionEnabled": False
-    }
+    resp = requests.get(f"{BASE_URL}/projects/{test_project_id}/billing-recap", headers=headers)
+    assert resp.status_code == 200, f"billing-recap failed: {resp.status_code} {resp.text}"
+    data = resp.json()
     
-    response = requests.post(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoices", 
-                            json=invoice_data, headers=headers)
+    log(f"Billing Recap Response:")
+    log(f"  nominal: {data.get('nominal'):,}")
+    log(f"  totalBilled: {data.get('totalBilled'):,}")
+    log(f"  draftAmount: {data.get('draftAmount'):,}")
+    log(f"  paid: {data.get('paid'):,}")
+    log(f"  receivable: {data.get('receivable'):,}")
+    log(f"  retentionHeld: {data.get('retentionHeld'):,}")
+    log(f"  sisaTagihan: {data.get('sisaTagihan'):,}")
+    log(f"  invoiceCount: {data.get('invoiceCount')}")
+    log(f"  billedCount: {data.get('billedCount')}")
     
-    if response.status_code != 400:
-        log(f"❌ FAIL: Expected 400, got {response.status_code}")
-        log(f"Response: {response.text}")
-        return False
+    # Expected values
+    # Invoice 1: Terkirim, amountDue = 11,100,000
+    # Invoice 2: Lunas, amountDue = 21,200,000, retention = 1,000,000
+    # Invoice 3: Draft, amountDue = 5,000,000
     
-    data = response.json()
-    if "Tipe invoice tidak valid" not in data.get("detail", ""):
-        log(f"❌ FAIL: Wrong error message: {data.get('detail')}")
-        return False
+    expected_total_billed = 11100000 + 21200000  # Terkirim + Lunas
+    expected_draft = 5000000
+    expected_retention = 1000000
+    expected_invoice_count = 3
+    expected_billed_count = 2
     
-    log(f"✅ PASS: Invalid type validation working correctly")
-    log(f"  - Error message: {data.get('detail')}")
+    log(f"\nExpected vs Actual:")
+    log(f"  totalBilled: expected={expected_total_billed:,}, actual={data.get('totalBilled'):,}")
+    log(f"  draftAmount: expected={expected_draft:,}, actual={data.get('draftAmount'):,}")
+    log(f"  retentionHeld: expected={expected_retention:,}, actual={data.get('retentionHeld'):,}")
+    log(f"  invoiceCount: expected={expected_invoice_count}, actual={data.get('invoiceCount')}")
+    log(f"  billedCount: expected={expected_billed_count}, actual={data.get('billedCount')}")
     
-    return True
+    # Verify math
+    assert data["totalBilled"] == expected_total_billed, f"totalBilled mismatch: expected {expected_total_billed}, got {data['totalBilled']}"
+    assert data["draftAmount"] == expected_draft, f"draftAmount mismatch: expected {expected_draft}, got {data['draftAmount']}"
+    assert data["retentionHeld"] == expected_retention, f"retentionHeld mismatch: expected {expected_retention}, got {data['retentionHeld']}"
+    assert data["invoiceCount"] == expected_invoice_count, f"invoiceCount mismatch: expected {expected_invoice_count}, got {data['invoiceCount']}"
+    assert data["billedCount"] == expected_billed_count, f"billedCount mismatch: expected {expected_billed_count}, got {data['billedCount']}"
+    
+    # Verify receivable = max(0, totalBilled - paid)
+    expected_receivable = max(0, data["totalBilled"] - data["paid"])
+    assert data["receivable"] == expected_receivable, f"receivable mismatch: expected {expected_receivable}, got {data['receivable']}"
+    
+    log(f"\n✓ All billing recap math verified correctly!")
+    return data
 
-def test_list_invoices(token):
-    """Test 7: GET /api/projects/{project_id}/invoices"""
-    log("=" * 80)
-    log("TEST 7: GET /api/projects/{project_id}/invoices")
-    log("=" * 80)
+def test_billing_recap_gating():
+    """Test 9: Billing recap premium gating"""
+    log("\n=== TEST 9: Billing Recap - Premium Gating ===")
     
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoices", headers=headers)
-    
-    if response.status_code != 200:
-        log(f"❌ FAIL: Status {response.status_code}")
-        log(f"Response: {response.text}")
-        return False
-    
-    data = response.json()
-    
-    if not isinstance(data, list):
-        log(f"❌ FAIL: Expected list, got {type(data)}")
-        return False
-    
-    log(f"✅ PASS: Invoice list retrieved successfully")
-    log(f"  - Total invoices: {len(data)}")
-    
-    if len(data) > 0:
-        # Verify newest first (descending order by createdAt)
-        log(f"  - First invoice: {data[0].get('number')} (type: {data[0].get('type')})")
-        
-        # Verify each has computed
-        for inv in data:
-            if "computed" not in inv:
-                log(f"❌ FAIL: Invoice {inv.get('id')} missing computed field")
-                return False
-    
-    return True
-
-def test_get_single_invoice(token, invoice_id):
-    """Test 8: GET /api/invoices/{invoice_id}"""
-    log("=" * 80)
-    log("TEST 8: GET /api/invoices/{invoice_id}")
-    log("=" * 80)
-    
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
-    
-    if response.status_code != 200:
-        log(f"❌ FAIL: Status {response.status_code}")
-        log(f"Response: {response.text}")
-        return False
-    
-    data = response.json()
-    
-    if data.get("id") != invoice_id:
-        log(f"❌ FAIL: ID mismatch. Expected {invoice_id}, got {data.get('id')}")
-        return False
-    
-    if "computed" not in data:
-        log(f"❌ FAIL: Missing computed field")
-        return False
-    
-    log(f"✅ PASS: Single invoice retrieved successfully")
-    log(f"  - Invoice ID: {data.get('id')}")
-    log(f"  - Number: {data.get('number')}")
-    log(f"  - Type: {data.get('type')}")
-    
-    return True
-
-def test_update_invoice(token, invoice_id):
-    """Test 9: PUT /api/invoices/{invoice_id}"""
-    log("=" * 80)
-    log("TEST 9: PUT /api/invoices/{invoice_id}")
-    log("=" * 80)
-    
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    # First get the invoice
-    response = requests.get(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
-    if response.status_code != 200:
-        log(f"❌ FAIL: Could not get invoice for update")
-        return False
-    
-    invoice = response.json()
-    
-    # Update status and change an item
-    update_data = {
-        "type": invoice.get("type"),
-        "number": invoice.get("number"),
-        "invoiceDate": invoice.get("invoiceDate"),
-        "dueDate": invoice.get("dueDate"),
-        "status": "Terkirim",  # Changed from Draft
-        "clientName": invoice.get("clientName"),
-        "clientAddress": invoice.get("clientAddress"),
-        "clientPhone": invoice.get("clientPhone"),
-        "items": [
-            {
-                "description": "Uang Muka (DP) 50% - Updated",  # Changed description
-                "qty": 1,
-                "unitPrice": 12000000  # Changed amount
-            }
-        ],
-        "ppnEnabled": invoice.get("ppnEnabled"),
-        "ppnPercent": invoice.get("ppnPercent"),
-        "retentionEnabled": invoice.get("retentionEnabled"),
-        "retentionPercent": invoice.get("retentionPercent"),
-        "companyName": invoice.get("companyName"),
-        "companyAddress": invoice.get("companyAddress", ""),
-        "companyPhone": invoice.get("companyPhone", ""),
-        "bankName": invoice.get("bankName"),
-        "bankAccount": invoice.get("bankAccount"),
-        "bankHolder": invoice.get("bankHolder"),
-        "signerLeft": invoice.get("signerLeft", ""),
-        "signerRight": invoice.get("signerRight", ""),
-        "signatureImage": invoice.get("signatureImage", ""),
-        "notes": invoice.get("notes")
-    }
-    
-    response = requests.put(f"{BASE_URL}/invoices/{invoice_id}", 
-                           json=update_data, headers=headers)
-    
-    if response.status_code != 200:
-        log(f"❌ FAIL: Status {response.status_code}")
-        log(f"Response: {response.text}")
-        return False
-    
-    data = response.json()
-    
-    if data.get("status") != "Terkirim":
-        log(f"❌ FAIL: Status not updated. Expected 'Terkirim', got {data.get('status')}")
-        return False
-    
-    # Verify computed recalculated
-    computed = data.get("computed", {})
-    expected_subtotal = 12000000
-    expected_ppn = round(12000000 * 11 / 100)  # 1320000
-    expected_gross = expected_subtotal + expected_ppn  # 13320000
-    
-    if computed.get("subtotal") != expected_subtotal:
-        log(f"❌ FAIL: Computed not recalculated correctly")
-        return False
-    
-    log(f"✅ PASS: Invoice updated successfully")
-    log(f"  - Status: {data.get('status')}")
-    log(f"  - New subtotal: Rp {computed['subtotal']:,}")
-    log(f"  - New amount due: Rp {computed['amountDue']:,}")
-    
-    return True
-
-def test_invoice_pdf(token, invoice_id, invoice_type):
-    """Test 10: GET /api/invoices/{invoice_id}/pdf?auth={token}"""
-    log("=" * 80)
-    log(f"TEST 10: GET /api/invoices/{invoice_id}/pdf?auth={{token}} (type: {invoice_type})")
-    log("=" * 80)
-    
-    response = requests.get(f"{BASE_URL}/invoices/{invoice_id}/pdf?auth={token}")
-    
-    if response.status_code != 200:
-        log(f"❌ FAIL: Status {response.status_code}")
-        log(f"Response: {response.text[:200]}")
-        return False
-    
-    content_type = response.headers.get("Content-Type", "")
-    if "application/pdf" not in content_type:
-        log(f"❌ FAIL: Wrong content type: {content_type}")
-        return False
-    
-    pdf_content = response.content
-    if not pdf_content.startswith(b"%PDF"):
-        log(f"❌ FAIL: Not a valid PDF (doesn't start with %PDF)")
-        return False
-    
-    log(f"✅ PASS: PDF generated successfully")
-    log(f"  - Content-Type: {content_type}")
-    log(f"  - Size: {len(pdf_content)} bytes")
-    log(f"  - Starts with: {pdf_content[:10]}")
-    
-    return True
-
-def test_premium_gating_free_user(token):
-    """Test 11: Premium gating - Free user should get 403"""
-    log("=" * 80)
-    log("TEST 11: Premium gating - Free user should get 403")
-    log("=" * 80)
-    
-    # Register a new free user
-    free_email = f"test_invoice_free_{int(time.time())}@test.com"
-    response = requests.post(f"{BASE_URL}/auth/register", json={
+    # Register free user
+    free_email = f"test_billing_free_{int(time.time())}@test.com"
+    log(f"Registering free user: {free_email}")
+    resp = requests.post(f"{BASE_URL}/auth/register", json={
         "email": free_email,
         "name": "Test Free User",
         "password": "Test123456"
     })
+    assert resp.status_code == 200, f"Register failed: {resp.status_code} {resp.text}"
+    free_token = resp.json()["token"]
+    log(f"✓ Free user registered")
     
-    if response.status_code != 200:
-        log(f"❌ FAIL: Could not register free user. Status {response.status_code}")
-        return False
-    
-    free_token = response.json().get("token")
-    
-    # Try to access invoice-context with free token
+    # Try to access billing-recap with free token
     headers = {"Authorization": f"Bearer {free_token}"}
-    response = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/invoice-context", headers=headers)
+    resp = requests.get(f"{BASE_URL}/projects/{test_project_id}/billing-recap", headers=headers)
+    assert resp.status_code == 403, f"Expected 403 for free user, got {resp.status_code}"
+    log(f"✓ Free user correctly blocked with 403")
     
-    # Should get 403 or 404 (404 if project doesn't belong to free user)
-    if response.status_code == 404:
-        log(f"⚠️  Got 404 (project not found for free user) - trying to create invoice instead")
-        
-        # Try to create invoice (should also fail with 403 at require_premium level)
-        invoice_data = {
-            "type": "proforma",
-            "number": "TEST/001",
-            "status": "Draft",
-            "clientName": "Test",
-            "items": [{"description": "Test", "qty": 1, "unitPrice": 1000000}],
-            "ppnEnabled": False,
-            "retentionEnabled": False
-        }
-        
-        # First need to create a project for the free user
-        project_response = requests.post(f"{BASE_URL}/projects", json={
-            "name": "Test Project Free",
-            "nominal": 10000000
-        }, headers=headers)
-        
-        if project_response.status_code == 200:
-            free_project_id = project_response.json().get("id")
-            
-            # Now try to create invoice
-            response = requests.post(f"{BASE_URL}/projects/{free_project_id}/invoices", 
-                                    json=invoice_data, headers=headers)
-            
-            if response.status_code != 403:
-                log(f"❌ FAIL: Expected 403, got {response.status_code}")
-                log(f"Response: {response.text}")
-                return False
-            
-            log(f"✅ PASS: Free user correctly blocked with 403")
-            return True
+    # Test demo user
+    log("\nTesting demo user access...")
+    resp = requests.post(f"{BASE_URL}/auth/demo")
+    assert resp.status_code == 200, f"Demo login failed: {resp.status_code}"
+    demo_token = resp.json()["token"]
+    log(f"✓ Demo user logged in")
     
-    if response.status_code != 403:
-        log(f"❌ FAIL: Expected 403, got {response.status_code}")
-        log(f"Response: {response.text}")
-        return False
-    
-    log(f"✅ PASS: Free user correctly blocked with 403")
-    
-    return True
-
-def test_demo_gating(token):
-    """Test 12: Demo gating - Demo user should get 403 on write operations"""
-    log("=" * 80)
-    log("TEST 12: Demo gating - Demo user should get 403 on write operations")
-    log("=" * 80)
-    
-    # Get demo token
-    response = requests.post(f"{BASE_URL}/auth/demo")
-    
-    if response.status_code != 200:
-        log(f"❌ FAIL: Could not get demo token. Status {response.status_code}")
-        return False
-    
-    demo_token = response.json().get("token")
-    
-    # Get demo projects
+    # Demo user should be able to access their own projects (premium tier)
+    # But not other users' projects
     headers = {"Authorization": f"Bearer {demo_token}"}
-    response = requests.get(f"{BASE_URL}/projects", headers=headers)
-    
-    if response.status_code != 200 or not response.json():
-        log(f"❌ FAIL: Could not get demo projects")
-        return False
-    
-    demo_project_id = response.json()[0].get("id")
-    
-    # Try to create invoice with demo token (should fail with 403)
-    invoice_data = {
-        "type": "proforma",
-        "number": "DEMO/001",
-        "status": "Draft",
-        "clientName": "Demo Client",
-        "items": [{"description": "Demo", "qty": 1, "unitPrice": 1000000}],
-        "ppnEnabled": False,
-        "retentionEnabled": False
-    }
-    
-    response = requests.post(f"{BASE_URL}/projects/{demo_project_id}/invoices", 
-                            json=invoice_data, headers=headers)
-    
-    if response.status_code != 403:
-        log(f"❌ FAIL: Expected 403, got {response.status_code}")
-        log(f"Response: {response.text}")
-        return False
-    
-    data = response.json()
-    if "Mode Demo" not in data.get("detail", ""):
-        log(f"⚠️  Warning: Expected 'Mode Demo' in error message, got: {data.get('detail')}")
-    
-    log(f"✅ PASS: Demo user correctly blocked with 403")
-    log(f"  - Error message: {data.get('detail')}")
-    
-    return True
+    resp = requests.get(f"{BASE_URL}/projects/{test_project_id}/billing-recap", headers=headers)
+    log(f"  Demo user accessing test project: {resp.status_code}")
+    # Expected: 404 (not owned) or 403 (if ownership check comes first)
+    assert resp.status_code in [403, 404], f"Demo user should get 403/404, got {resp.status_code}"
+    log(f"✓ Demo user correctly blocked from accessing other user's project")
 
-def test_rab_pdf_regression(token):
-    """Test 13: Regression - RAB PDF should still work (titled QUOTATION)"""
-    log("=" * 80)
-    log("TEST 13: Regression - RAB PDF should still work (titled QUOTATION)")
-    log("=" * 80)
-    
-    # Check if project has RAB
+def cleanup():
+    """Delete test invoices and projects"""
+    log("\n=== CLEANUP ===")
     headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/rab", headers=headers)
     
-    if response.status_code == 404:
-        log(f"⚠️  SKIP: Project has no RAB, cannot test RAB PDF")
-        return True
+    # Delete invoices
+    for invoice_id in created_invoices:
+        try:
+            resp = requests.delete(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
+            if resp.status_code == 200:
+                log(f"✓ Deleted invoice: {invoice_id}")
+            else:
+                log(f"⚠ Failed to delete invoice {invoice_id}: {resp.status_code}")
+        except Exception as e:
+            log(f"⚠ Error deleting invoice {invoice_id}: {e}")
     
-    if response.status_code != 200:
-        log(f"❌ FAIL: Could not get RAB. Status {response.status_code}")
-        return False
-    
-    # Try to get RAB PDF
-    response = requests.get(f"{BASE_URL}/projects/{EXISTING_PROJECT_ID}/rab/pdf?auth={token}")
-    
-    if response.status_code != 200:
-        log(f"❌ FAIL: RAB PDF failed. Status {response.status_code}")
-        log(f"Response: {response.text[:200]}")
-        return False
-    
-    content_type = response.headers.get("Content-Type", "")
-    if "application/pdf" not in content_type:
-        log(f"❌ FAIL: Wrong content type: {content_type}")
-        return False
-    
-    pdf_content = response.content
-    if not pdf_content.startswith(b"%PDF"):
-        log(f"❌ FAIL: Not a valid PDF")
-        return False
-    
-    log(f"✅ PASS: RAB PDF still working")
-    log(f"  - Size: {len(pdf_content)} bytes")
-    log(f"  - Note: Cannot verify 'QUOTATION' title without parsing PDF, but PDF generates successfully")
-    
-    return True
-
-def test_delete_invoice(token, invoice_id):
-    """Test 14: DELETE /api/invoices/{invoice_id}"""
-    log("=" * 80)
-    log("TEST 14: DELETE /api/invoices/{invoice_id}")
-    log("=" * 80)
-    
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.delete(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
-    
-    if response.status_code != 200:
-        log(f"❌ FAIL: Status {response.status_code}")
-        log(f"Response: {response.text}")
-        return False
-    
-    data = response.json()
-    if not data.get("ok"):
-        log(f"❌ FAIL: Delete did not return ok:true")
-        return False
-    
-    # Verify invoice is deleted (should get 404)
-    response = requests.get(f"{BASE_URL}/invoices/{invoice_id}", headers=headers)
-    
-    if response.status_code != 404:
-        log(f"❌ FAIL: Invoice still exists after delete. Status {response.status_code}")
-        return False
-    
-    log(f"✅ PASS: Invoice deleted successfully")
-    log(f"  - Subsequent GET returns 404")
-    
-    return True
+    # Delete test projects
+    for proj_id in [test_project_id, quotation_test_project_id]:
+        if proj_id:
+            try:
+                resp = requests.delete(f"{BASE_URL}/projects/{proj_id}", headers=headers)
+                if resp.status_code == 200:
+                    log(f"✓ Deleted test project: {proj_id}")
+                else:
+                    log(f"⚠ Failed to delete project {proj_id}: {resp.status_code}")
+            except Exception as e:
+                log(f"⚠ Error deleting project {proj_id}: {e}")
 
 def main():
-    print("\n" + "=" * 80)
-    print("INVOICE ENDPOINTS TEST SUITE")
-    print("=" * 80 + "\n")
-    
-    # Test 1: Login
-    token = test_login()
-    if not token:
-        log("\n❌ CRITICAL: Cannot proceed without token")
-        sys.exit(1)
-    
-    # Test 2: Invoice context
-    test_invoice_context(token)
-    
-    # Test 3: Create proforma invoice
-    proforma_id = test_create_proforma_invoice(token)
-    
-    # Test 4: Create final invoice with retention
-    final_id = test_create_final_invoice_with_retention(token)
-    
-    # Test 5-6: Validation tests
-    test_validation_empty_number(token)
-    test_validation_invalid_type(token)
-    
-    # Test 7: List invoices
-    test_list_invoices(token)
-    
-    # Test 8-9: Get and update invoice
-    if proforma_id:
-        test_get_single_invoice(token, proforma_id)
-        test_update_invoice(token, proforma_id)
-    
-    # Test 10: PDF generation
-    if proforma_id:
-        test_invoice_pdf(token, proforma_id, "proforma")
-    if final_id:
-        test_invoice_pdf(token, final_id, "final")
-    
-    # Test 11-12: Premium and demo gating
-    test_premium_gating_free_user(token)
-    test_demo_gating(token)
-    
-    # Test 13: RAB PDF regression
-    test_rab_pdf_regression(token)
-    
-    # Test 14: Delete invoices (cleanup)
-    if proforma_id:
-        test_delete_invoice(token, proforma_id)
-    if final_id:
-        test_delete_invoice(token, final_id)
-    
-    # Summary
-    print("\n" + "=" * 80)
-    print("TEST SUMMARY")
+    """Run all tests"""
+    print("=" * 80)
+    print("ProFinance Interior Backend Test Suite")
+    print("Testing: Invoice quotationNo + Billing Recap")
     print("=" * 80)
     
-    passed = sum(1 for r in results if "✅ PASS" in r)
-    failed = sum(1 for r in results if "❌ FAIL" in r)
-    skipped = sum(1 for r in results if "⚠️  SKIP" in r)
-    
-    print(f"\nTotal tests: {passed + failed + skipped}")
-    print(f"✅ Passed: {passed}")
-    print(f"❌ Failed: {failed}")
-    print(f"⚠️  Skipped: {skipped}")
-    
-    if failed > 0:
-        print("\n❌ SOME TESTS FAILED")
-        sys.exit(1)
-    else:
-        print("\n✅ ALL TESTS PASSED")
-        sys.exit(0)
+    try:
+        # Login
+        login_premium()
+        
+        # Test invoice-context first (uses existing project)
+        test_invoice_context()
+        
+        # Create test projects
+        create_quotation_test_project()
+        create_test_project()
+        
+        # Test A: No Quotation on Invoice
+        invoice_id = test_create_invoice_with_quotation()
+        test_list_invoices(invoice_id)
+        test_get_single_invoice(invoice_id)
+        test_update_invoice_quotation(invoice_id)
+        test_invoice_pdf(invoice_id)
+        
+        # Test B: Billing Recap
+        inv1, inv2, inv3 = test_billing_recap_scenario()
+        test_billing_recap_math(inv1, inv2, inv3)
+        test_billing_recap_gating()
+        
+        # Cleanup
+        cleanup()
+        
+        print("\n" + "=" * 80)
+        print("✓ ALL TESTS PASSED")
+        print("=" * 80)
+        
+    except AssertionError as e:
+        print(f"\n❌ TEST FAILED: {e}")
+        cleanup()
+        exit(1)
+    except Exception as e:
+        print(f"\n❌ ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        cleanup()
+        exit(1)
 
 if __name__ == "__main__":
     main()

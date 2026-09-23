@@ -49,3 +49,8 @@ export function invoicePdfUrl(invoiceId) {
   const token = localStorage.getItem("pf_token");
   return `${API}/invoices/${invoiceId}/pdf?auth=${encodeURIComponent(token || "")}`;
 }
+
+export function recapXlsxUrl(projectId) {
+  const token = localStorage.getItem("pf_token");
+  return `${API}/projects/${projectId}/recap/xlsx?auth=${encodeURIComponent(token || "")}`;
+}

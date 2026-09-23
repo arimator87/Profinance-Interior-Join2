@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { api } from "@/lib/api";
+import { rupiah } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Ruler, Loader2, Check, Sparkles, PlayCircle, Eye, EyeOff, Phone, Mail, Lock } from "lucide-react";
+import { Ruler, Loader2, Check, Sparkles, PlayCircle, Eye, EyeOff, Phone, Mail, Lock, Crown } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Login() {
@@ -22,10 +24,25 @@ export default function Login() {
   const [resetNew, setResetNew] = useState("");
   const [showResetNew, setShowResetNew] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
+  const [pricing, setPricing] = useState(null);
 
   useEffect(() => {
     if (user) navigate("/dashboard", { replace: true });
   }, [user, navigate]);
+
+  useEffect(() => {
+    let alive = true;
+    api.get("/settings/public").then((r) => { if (alive) setPricing(r.data); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  // Effective monthly premium price (respects admin promo settings)
+  const promoEnds = pricing?.promoEndsAt ? Date.parse(pricing.promoEndsAt) : null;
+  const serverNow = pricing?.serverNow ? Date.parse(pricing.serverNow) : Date.now();
+  const promoLive = !!pricing?.promoActive && (!promoEnds || serverNow < promoEnds);
+  const mBase = pricing?.monthlyPrice ?? 149000;
+  const mPromo = pricing?.monthlyPromo ?? mBase;
+  const monthlyEff = promoLive && mPromo > 0 && mPromo < mBase ? mPromo : mBase;
 
   const googleLogin = () => {
     // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
@@ -113,12 +130,14 @@ export default function Login() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
               {[
+                "RAB Builder & PDF Quotation profesional",
+                "Invoice & Proforma + kirim WhatsApp",
+                "Rekap Penagihan: tertagih vs terbayar vs retensi",
+                "Ekspor Rekap & RAB ke Excel",
                 "Portal Klien realtime + share WhatsApp",
                 "Impor RAB langsung dari Excel",
-                "Baseline vs Revisi RAB",
                 "Kurva-S cost-loaded & Time Schedule",
-                "Kasbon & Pelunasan Tukang",
-                "Laporan PDF profesional",
+                "Backup data proyek (ZIP + Excel)",
               ].map((f, i) => (
                 <div key={i} className="flex items-center gap-2.5 text-sm text-slate-200">
                   <span className="w-5 h-5 rounded-full bg-amber-500/15 flex items-center justify-center shrink-0">
@@ -285,6 +304,24 @@ export default function Login() {
               <p className="text-[11px] text-slate-400 mt-2 text-center">
                 Rasakan semua fitur Premium dengan data contoh — <b>mode baca-saja</b>, tanpa perlu daftar.
               </p>
+
+              {/* Premium info untuk akun Free */}
+              <div className="mt-6 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-4" data-testid="premium-info-card">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                    <Crown className="w-4 h-4 text-amber-600" />
+                  </span>
+                  <div className="text-sm font-bold text-slate-900">Daftar Free dulu, upgrade kapan saja</div>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  <span className="font-semibold text-slate-700">Free:</span> proyek tanpa batas, cash flow, kasbon & pelunasan tukang, indikator kesehatan finansial, upload foto nota.
+                </p>
+                <p className="text-[11px] text-slate-500 leading-relaxed mt-1.5">
+                  <span className="font-semibold text-amber-700">Premium{monthlyEff > 0 ? ` mulai ${rupiah(monthlyEff)}/bulan` : ""}:</span>{" "}
+                  Invoice & Proforma (+ kirim WhatsApp), Rekap Penagihan & Ekspor Excel, Progress & Kurva-S, Portal Klien realtime, PDF Quotation & laporan profesional.
+                </p>
+                <p className="text-[10px] text-slate-400 mt-2">Setelah masuk: menu Akun → Paket &amp; Upgrade. Data Anda tetap aman saat upgrade.</p>
+              </div>
             </>
           )}
 
@@ -296,12 +333,14 @@ export default function Login() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2.5">
               {[
-                "Portal Klien realtime + WhatsApp",
+                "RAB Builder & PDF Quotation",
+                "Invoice & Proforma + WhatsApp",
+                "Rekap Penagihan & retensi",
+                "Ekspor Rekap & RAB ke Excel",
+                "Portal Klien realtime",
                 "Impor RAB langsung dari Excel",
-                "Baseline vs Revisi RAB",
-                "Kurva-S cost-loaded & Time Schedule",
-                "Kasbon & Pelunasan Tukang",
-                "Laporan PDF profesional",
+                "Kurva-S & Time Schedule",
+                "Backup data (ZIP + Excel)",
               ].map((f, i) => (
                 <div key={i} className="flex items-center gap-2.5 text-sm text-slate-600">
                   <span className="w-5 h-5 rounded-full bg-amber-100 flex items-center justify-center shrink-0">

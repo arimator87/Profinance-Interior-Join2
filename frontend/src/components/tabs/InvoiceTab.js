@@ -24,11 +24,12 @@ const STATUS_META = {
 };
 const STATUSES = ["Draft", "Terkirim", "Lunas"];
 
-export function InvoiceTab({ project, createSignal = 0 }) {
+export function InvoiceTab({ project, createSignal = 0, onChanged }) {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +81,7 @@ export function InvoiceTab({ project, createSignal = 0 }) {
       });
       toast.success(`Status diubah ke ${status}`);
       load();
+      onChanged?.();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Gagal mengubah status");
     }
@@ -90,6 +92,7 @@ export function InvoiceTab({ project, createSignal = 0 }) {
       await api.delete(`/invoices/${inv.id}`);
       toast.success("Invoice dihapus");
       load();
+      onChanged?.();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Gagal menghapus invoice");
     }
@@ -98,6 +101,20 @@ export function InvoiceTab({ project, createSignal = 0 }) {
   if (loading) {
     return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-amber-600" /></div>;
   }
+
+  const counts = {
+    all: invoices.length,
+    Draft: invoices.filter((i) => i.status === "Draft").length,
+    Terkirim: invoices.filter((i) => i.status === "Terkirim").length,
+    Lunas: invoices.filter((i) => i.status === "Lunas").length,
+  };
+  const filtered = statusFilter === "all" ? invoices : invoices.filter((i) => i.status === statusFilter);
+  const FILTERS = [
+    { key: "all", label: "Semua" },
+    { key: "Draft", label: "Draft" },
+    { key: "Terkirim", label: "Terkirim" },
+    { key: "Lunas", label: "Lunas" },
+  ];
 
   return (
     <div>
@@ -111,6 +128,25 @@ export function InvoiceTab({ project, createSignal = 0 }) {
         </Button>
       </div>
 
+      {invoices.length > 0 && (
+        <div className="flex items-center gap-1.5 mb-4 flex-wrap" data-testid="invoice-status-filter">
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              data-testid={`invoice-filter-${f.key}`}
+              onClick={() => setStatusFilter(f.key)}
+              className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors border ${
+                statusFilter === f.key
+                  ? "bg-amber-600 text-white border-amber-600"
+                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {f.label} <span className={statusFilter === f.key ? "text-amber-100" : "text-slate-400"}>({counts[f.key]})</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {invoices.length === 0 ? (
         <Card className="p-12 text-center border-dashed border-2 border-slate-200 bg-white/60">
           <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center mx-auto mb-4">
@@ -120,9 +156,13 @@ export function InvoiceTab({ project, createSignal = 0 }) {
           <p className="text-slate-500 text-sm mt-1 mb-5 max-w-md mx-auto">Buat Proforma Invoice untuk menagih uang muka / termin, atau Invoice final saat pelunasan.</p>
           <Button data-testid="empty-create-invoice" onClick={openCreate} className="bg-amber-600 hover:bg-amber-700 text-white gap-2"><Plus className="w-4 h-4" /> Buat Invoice Pertama</Button>
         </Card>
+      ) : filtered.length === 0 ? (
+        <Card className="p-8 text-center border-dashed border-2 border-slate-200 bg-white/60" data-testid="invoice-filter-empty">
+          <p className="text-slate-500 text-sm">Tidak ada invoice berstatus <span className="font-semibold">{statusFilter}</span>.</p>
+        </Card>
       ) : (
         <div className="space-y-3">
-          {invoices.map((inv) => {
+          {filtered.map((inv) => {
             const meta = TYPE_META[inv.type] || TYPE_META.final;
             const c = inv.computed || {};
             return (
@@ -175,7 +215,7 @@ export function InvoiceTab({ project, createSignal = 0 }) {
         </div>
       )}
 
-      <InvoiceDialog open={dialogOpen} onOpenChange={setDialogOpen} project={project} invoice={editing} onSaved={load} />
+      <InvoiceDialog open={dialogOpen} onOpenChange={setDialogOpen} project={project} invoice={editing} onSaved={() => { load(); onChanged?.(); }} />
     </div>
   );
 }

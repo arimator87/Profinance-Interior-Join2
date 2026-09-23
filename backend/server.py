@@ -39,6 +39,7 @@ from auth import (
 )
 from storage import init_storage, put_object, get_object, APP_NAME, MIME_TYPES
 from pdf_report import build_report_pdf, build_progress_pdf, build_rab_pdf, build_invoice_pdf
+from excel_report import build_project_recap_xlsx
 import backup as backup_mod
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -1870,6 +1871,55 @@ async def billing_recap(project_id: str, user: dict = Depends(require_premium)):
         "invoiceCount": len(invoices),
         "billedCount": billed_count,
     }
+
+
+@api.get("/projects/{project_id}/recap/xlsx")
+async def recap_xlsx(project_id: str, request: Request, auth: Optional[str] = Query(None)):
+    """Export a nicely formatted Excel report: billing recap + invoice list + RAB."""
+    user = await _user_from_request_or_query(request, auth)
+    await require_premium(user)
+    p = await get_owned_project(project_id, user)
+    summary = await compute_summary(p)
+
+    invoices = await db.invoices.find(
+        {"project_id": project_id, "user_id": user["user_id"]}, {"_id": 0}
+    ).sort("createdAt", 1).to_list(500)
+    invoices_pub = [_invoice_public(i) for i in invoices]
+
+    # Reuse billing_recap math
+    total_billed = draft_amount = retention_held = billed_count = 0
+    for inv in invoices:
+        comp = compute_invoice(inv)
+        retention_held += comp.get("retentionAmount", 0)
+        if inv.get("status") in ("Terkirim", "Lunas"):
+            total_billed += comp.get("amountDue", 0)
+            billed_count += 1
+        else:
+            draft_amount += comp.get("amountDue", 0)
+    paid = summary.get("terbayar", 0)
+    recap = {
+        "nominal": summary.get("nominal", 0),
+        "totalBilled": total_billed,
+        "draftAmount": draft_amount,
+        "paid": paid,
+        "receivable": max(0, total_billed - paid),
+        "retentionHeld": retention_held,
+        "sisaTagihan": summary.get("sisaTagihan", 0),
+        "invoiceCount": len(invoices),
+        "billedCount": billed_count,
+    }
+
+    rab = p.get("rab") or {}
+    rab_computed = compute_rab(rab) if rab else None
+    template = await db.rab_templates.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+
+    xlsx_bytes = build_project_recap_xlsx(p, summary, recap, invoices_pub, rab_computed, template)
+    safe = slugify(p.get("name") or "proyek")
+    return StreamingResponse(
+        iter([xlsx_bytes]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="Rekap-{safe}.xlsx"'},
+    )
 
 
 
