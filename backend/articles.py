@@ -359,6 +359,9 @@ async def get_blog(slug: str):
     if not doc:
         raise HTTPException(status_code=404, detail="Artikel tidak ditemukan")
     await db.articles.update_one({"id": doc["id"]}, {"$inc": {"views": 1}})
+    # track daily views (global) for the admin statistics trend chart
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    await db.article_daily_stats.update_one({"date": today}, {"$inc": {"views": 1}}, upsert=True)
     # related: same category, exclude self
     rel = await db.articles.find(
         {"status": "published", "category": doc.get("category"), "id": {"$ne": doc["id"]}},
@@ -636,6 +639,67 @@ async def admin_regen_cover(article_id: str, user: dict = Depends(require_admin)
                                  {"$set": {"cover_path": new_path, "cover_external": None, "updated_at": now_iso()}})
     fresh = await db.articles.find_one({"id": article_id}, {"_id": 0})
     return article_public(fresh, full=True)
+
+
+@router.get("/admin/articles/stats/overview")
+async def admin_article_stats(user: dict = Depends(require_admin)):
+    # totals
+    total = await db.articles.count_documents({})
+    published = await db.articles.count_documents({"status": "published"})
+    drafts = await db.articles.count_documents({"status": {"$ne": "published"}})
+    ai_count = await db.articles.count_documents({"source": "ai"})
+
+    # top most-read articles
+    top_docs = await db.articles.find({}, {"_id": 0, "id": 1, "title": 1, "slug": 1,
+                                           "views": 1, "category": 1, "status": 1}) \
+        .sort("views", -1).limit(8).to_list(8)
+    top = [{
+        "id": d["id"], "title": d.get("title", ""), "slug": d.get("slug", ""),
+        "views": int(d.get("views", 0)), "category": d.get("category", ""),
+        "categoryLabel": CATEGORY_LABELS.get(d.get("category", ""), "Artikel"),
+        "status": d.get("status", "draft"),
+    } for d in top_docs]
+
+    total_views = sum(d.get("views", 0) for d in top_docs)
+    # more accurate total views across ALL articles
+    agg = await db.articles.aggregate([{"$group": {"_id": None, "v": {"$sum": "$views"}}}]).to_list(1)
+    if agg:
+        total_views = int(agg[0].get("v", 0))
+
+    # views per category
+    cat_docs = await db.articles.find({}, {"_id": 0, "category": 1, "views": 1}).to_list(1000)
+    by_cat = {}
+    for d in cat_docs:
+        c = d.get("category", "interior")
+        slot = by_cat.setdefault(c, {"category": c, "categoryLabel": CATEGORY_LABELS.get(c, c.title()), "count": 0, "views": 0})
+        slot["count"] += 1
+        slot["views"] += int(d.get("views", 0))
+    by_category = list(by_cat.values())
+
+    # 14-day views trend (fill missing days with 0)
+    since = (datetime.now(timezone.utc) - timedelta(days=13)).strftime("%Y-%m-%d")
+    daily_docs = await db.article_daily_stats.find({"date": {"$gte": since}}, {"_id": 0}).to_list(400)
+    daily_map = {d["date"]: int(d.get("views", 0)) for d in daily_docs}
+    daily = []
+    for i in range(13, -1, -1):
+        day = (datetime.now(timezone.utc) - timedelta(days=i))
+        key = day.strftime("%Y-%m-%d")
+        daily.append({
+            "date": key,
+            "label": day.strftime("%d %b"),
+            "views": daily_map.get(key, 0),
+        })
+
+    return {
+        "totalArticles": total,
+        "published": published,
+        "drafts": drafts,
+        "aiCount": ai_count,
+        "totalViews": total_views,
+        "top": top,
+        "byCategory": by_category,
+        "daily": daily,
+    }
 
 
 # ------------------------------------------------------------------ Autonomous cron

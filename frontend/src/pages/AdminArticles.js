@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { coverSrc, CATEGORY_META, fmtDate } from "@/lib/blog";
+import ArticleStats from "@/components/ArticleStats";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -228,6 +229,9 @@ export default function AdminArticles() {
           </div>
         </div>
 
+        {/* Statistik */}
+        <ArticleStats />
+
         {/* Auto-generation settings */}
         {settings && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 mb-6">
@@ -272,7 +276,7 @@ export default function AdminArticles() {
         ) : items.length === 0 ? (
           <div className="text-center py-16 text-slate-500 bg-white rounded-2xl border border-slate-100">
             <Newspaper className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-            <p>Belum ada artikel. Mulai dengan "Buat dengan AI" atau "Tulis Manual".</p>
+            <p>Belum ada artikel. Mulai dengan &ldquo;Buat dengan AI&rdquo; atau &ldquo;Tulis Manual&rdquo;.</p>
           </div>
         ) : (
           <div className="space-y-3">
