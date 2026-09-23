@@ -1,0 +1,35 @@
+{
+    "short_name": "ProFinance",
+    "name": "ProFinance Interior — Keuangan & Proyek Kontraktor Interior",
+    "description": "Satu aplikasi untuk kontraktor interior & arsitektur: RAB & Quotation PDF, Invoice & Proforma via WhatsApp, Rekap Penagihan, Cash Flow & Kasbon Tukang, Progress Kurva-S, dan Portal Klien.",
+    "id": "/",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "orientation": "any",
+    "lang": "id",
+    "dir": "ltr",
+    "theme_color": "#d97706",
+    "background_color": "#0f172a",
+    "categories": ["business", "finance", "productivity"],
+    "icons": [
+        {
+            "src": "/icon-192.png",
+            "type": "image/png",
+            "sizes": "192x192",
+            "purpose": "any"
+        },
+        {
+            "src": "/icon-512.png",
+            "type": "image/png",
+            "sizes": "512x512",
+            "purpose": "any"
+        },
+        {
+            "src": "/icon-512-maskable.png",
+            "type": "image/png",
+            "sizes": "512x512",
+            "purpose": "maskable"
+        }
+    ]
+}
