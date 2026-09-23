@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta
 
 # Base URL for the API
-BASE_URL = "https://interior-join.preview.emergentagent.com/api"
+BASE_URL = "https://profinance-interior-3.preview.emergentagent.com/api"
 
 # Test credentials (premium account)
 EMAIL = "furnitrue.mail@gmail.com"
